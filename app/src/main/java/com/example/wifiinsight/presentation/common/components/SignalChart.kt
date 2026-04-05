@@ -22,13 +22,17 @@ fun SignalChart(
     lineColor: Color = MaterialTheme.colorScheme.primary
 ) {
     val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
+    val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
 
     Canvas(
         modifier = modifier
             .fillMaxWidth()
             .height(100.dp)
     ) {
-        if (signalHistory.isEmpty()) return@Canvas
+        // FIX CRÍTICO: Filtrar valores inválidos -127
+        val validHistory = signalHistory.filter { it != -127 }.takeLast(50)
+        
+        if (validHistory.isEmpty()) return@Canvas
 
         val padding = 8.dp.toPx()
         val width = size.width - 2 * padding
@@ -40,14 +44,14 @@ fun SignalChart(
             size = androidx.compose.ui.geometry.Size(width, height)
         )
 
-        drawGrid(padding, width, height)
+        drawGrid(padding, width, height, gridColor)
 
         val maxRssi = 0f
         val minRssi = -100f
         val range = maxRssi - minRssi
 
-        val points = signalHistory.takeLast(50).mapIndexed { index, rssi ->
-            val x = padding + (index.toFloat() / min(49, signalHistory.size - 1).coerceAtLeast(1)) * width
+        val points = validHistory.mapIndexed { index, rssi ->
+            val x = padding + (index.toFloat() / (validHistory.size - 1).coerceAtLeast(1)) * width
             val y = padding + height - ((rssi - minRssi) / range) * height
             Offset(x, y.coerceIn(padding, padding + height))
         }
@@ -77,8 +81,7 @@ fun SignalChart(
     }
 }
 
-private fun DrawScope.drawGrid(padding: Float, width: Float, height: Float) {
-    val gridColor = Color.Gray.copy(alpha = 0.3f)
+private fun DrawScope.drawGrid(padding: Float, width: Float, height: Float, gridColor: Color) {
     val strokeWidth = 1.dp.toPx()
 
     for (i in 0..4) {

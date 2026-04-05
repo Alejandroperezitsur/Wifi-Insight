@@ -104,14 +104,15 @@ class NetworkDetailViewModel(
     companion object {
         fun provideFactory(
             repository: WifiRepository,
-            connectToNetworkUseCase: ConnectToNetworkUseCase
+            connectToNetworkUseCase: ConnectToNetworkUseCase,
+            savedStateHandle: SavedStateHandle
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return NetworkDetailViewModel(
                     repository,
                     connectToNetworkUseCase,
-                    SavedStateHandle()
+                    savedStateHandle
                 ) as T
             }
         }

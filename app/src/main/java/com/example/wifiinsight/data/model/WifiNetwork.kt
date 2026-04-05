@@ -1,6 +1,7 @@
 package com.example.wifiinsight.data.model
 
 import android.net.wifi.ScanResult
+import com.example.wifiinsight.domain.util.SignalCalculator
 import java.util.UUID
 
 data class WifiNetwork(
@@ -13,6 +14,30 @@ data class WifiNetwork(
     val timestamp: Long = System.currentTimeMillis(),
     val capabilities: String = ""
 ) {
+    /**
+     * SSID seguro - nunca null ni vacío
+     */
+    val safeSsid: String
+        get() = ssid.takeIf { it.isNotBlank() } ?: "<Red Oculta>"
+
+    /**
+     * BSSID seguro - nunca null
+     */
+    val safeBssid: String
+        get() = bssid.takeIf { it.isNotBlank() } ?: "No disponible"
+
+    /**
+     * Frecuencia formateada en GHz
+     */
+    val frequencyGHz: String
+        get() = "${frequency / 1000.0} GHz"
+
+    /**
+     * Señal como porcentaje (0-100)
+     */
+    val signalPercentage: Int
+        get() = SignalCalculator.rssiToPercentage(rssi)
+
     companion object {
         fun fromScanResult(scanResult: ScanResult): WifiNetwork {
             return WifiNetwork(

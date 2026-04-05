@@ -56,7 +56,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavBackStackEntry
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.repository.WifiRepositoryImpl
 import com.example.wifiinsight.domain.usecase.ConnectToNetworkUseCase
@@ -70,14 +72,16 @@ import com.example.wifiinsight.presentation.common.components.getSignalColor
 @Composable
 fun NetworkDetailScreen(
     networkId: String,
+    savedStateHandle: SavedStateHandle,
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val repository = remember { WifiRepositoryImpl(context) }
     val connectUseCase = remember { ConnectToNetworkUseCase(repository) }
+    // FIX CRÍTICO #5: Pasar SavedStateHandle real al ViewModel
     val viewModel: NetworkDetailViewModel = viewModel(
-        factory = NetworkDetailViewModel.provideFactory(repository, connectUseCase)
+        factory = NetworkDetailViewModel.provideFactory(repository, connectUseCase, savedStateHandle)
     )
 
     val uiState by viewModel.uiState.collectAsState()

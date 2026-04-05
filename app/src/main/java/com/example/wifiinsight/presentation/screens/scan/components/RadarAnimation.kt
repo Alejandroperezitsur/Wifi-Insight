@@ -1,10 +1,8 @@
 package com.example.wifiinsight.presentation.screens.scan.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -13,144 +11,203 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
+/**
+ * Radar WOW - Animación de escaneo tipo scanner real.
+ * Ondas expansivas con alpha decay, partículas sutiles, y efectos premium.
+ */
 @Composable
 fun RadarAnimation(
     isScanning: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val secondaryColor = MaterialTheme.colorScheme.secondary
-    val tertiaryColor = MaterialTheme.colorScheme.tertiary
-
     val infiniteTransition = rememberInfiniteTransition(label = "radar")
 
-    val rotation by infiniteTransition.animateFloat(
+    // Rotación del scanner - FIX #13: Reducido de 3000ms a 4000ms para menos CPU
+    val scanAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(3000, easing = LinearEasing),
+            animation = tween(4000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "rotation"
+        label = "radar_rotation"
     )
 
-    val pulse1 by infiniteTransition.animateFloat(
+    // FIX #13: Solo una onda expansiva en lugar de dos
+    val waveProgress by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
+            animation = tween(3000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "pulse1"
+        label = "wave"
     )
 
-    val pulse2 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = CubicBezierEasing(0.4f, 0.0f, 0.2f, 1f)),
-            repeatMode = RepeatMode.Restart,
-            initialStartOffset = androidx.compose.animation.core.StartOffset(1000)
-        ),
-        label = "pulse2"
-    )
+    // FIX #13: Eliminada animación de partículas (muy costosa en CPU)
 
     Box(
-        modifier = modifier
-            .size(200.dp),
+        modifier = modifier.size(200.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val center = Offset(size.width / 2, size.height / 2)
-            val maxRadius = size.minDimension / 2 - 8.dp.toPx()
+            val centerX = size.width / 2
+            val centerY = size.height / 2
+            val maxRadius = size.minDimension / 2 - 10f
 
-            drawRadarGrid(center, maxRadius, primaryColor.copy(alpha = 0.3f))
+            // Dibujar círculos concéntricos de fondo
+            drawRadarCircles(centerX, centerY, maxRadius)
 
-            if (isScanning) {
-                drawSweep(center, maxRadius, rotation, primaryColor.copy(alpha = 0.6f))
-                drawPulse(center, maxRadius, pulse1, secondaryColor.copy(alpha = 0.4f))
-                drawPulse(center, maxRadius, pulse2, tertiaryColor.copy(alpha = 0.3f))
-            }
+            // FIX #13: Solo una onda expansiva
+            drawExpandingWave(centerX, centerY, maxRadius, waveProgress, 0)
 
-            drawCenterDot(center, primaryColor)
+            // FIX #13: Eliminado drawFloatingParticles (muy costoso)
+
+            // Dibujar el scanner rotativo
+            drawRotatingScanner(centerX, centerY, maxRadius, scanAngle)
+
+            // Dibujar punto central pulsante
+            drawCenterPoint(centerX, centerY)
         }
     }
 }
 
-private fun DrawScope.drawRadarGrid(center: Offset, maxRadius: Float, color: Color) {
-    val strokeWidth = 1.5f.dp.toPx()
-
-    for (i in 1..3) {
-        val radius = maxRadius * i / 3
+private fun DrawScope.drawRadarCircles(
+    centerX: Float,
+    centerY: Float,
+    maxRadius: Float
+) {
+    val circles = 4
+    for (i in 1..circles) {
+        val radius = maxRadius * i / circles
+        val alpha = 0.1f + (i * 0.05f)
         drawCircle(
-            color = color,
+            color = Color(0xFF00B4D8).copy(alpha = alpha),
             radius = radius,
-            center = center,
-            style = Stroke(width = strokeWidth)
+            center = Offset(centerX, centerY),
+            style = Stroke(width = 1.5f)
         )
     }
 
+    // Líneas cruzadas
     drawLine(
-        color = color,
-        start = Offset(center.x - maxRadius, center.y),
-        end = Offset(center.x + maxRadius, center.y),
-        strokeWidth = strokeWidth
+        color = Color(0xFF00B4D8).copy(alpha = 0.15f),
+        start = Offset(centerX - maxRadius, centerY),
+        end = Offset(centerX + maxRadius, centerY),
+        strokeWidth = 1f
     )
-
     drawLine(
-        color = color,
-        start = Offset(center.x, center.y - maxRadius),
-        end = Offset(center.x, center.y + maxRadius),
-        strokeWidth = strokeWidth
+        color = Color(0xFF00B4D8).copy(alpha = 0.15f),
+        start = Offset(centerX, centerY - maxRadius),
+        end = Offset(centerX, centerY + maxRadius),
+        strokeWidth = 1f
     )
 }
 
-private fun DrawScope.drawSweep(center: Offset, maxRadius: Float, rotation: Float, color: Color) {
-    val sweepRadius = maxRadius * 0.95f
-    val startAngle = rotation - 45f
-    val sweepAngle = 60f
+private fun DrawScope.drawExpandingWave(
+    centerX: Float,
+    centerY: Float,
+    maxRadius: Float,
+    progress: Float,
+    waveIndex: Int
+) {
+    val delay = waveIndex * 0.5f
+    val adjustedProgress = (progress + delay) % 1f
+    val radius = maxRadius * adjustedProgress
+    val alpha = (1f - adjustedProgress) * 0.4f
 
-    drawArc(
-        color = color,
-        startAngle = startAngle,
-        sweepAngle = sweepAngle,
-        useCenter = true,
-        topLeft = Offset(center.x - sweepRadius, center.y - sweepRadius),
-        size = Size(sweepRadius * 2, sweepRadius * 2),
-        alpha = 0.5f
-    )
-}
-
-private fun DrawScope.drawPulse(center: Offset, maxRadius: Float, progress: Float, color: Color) {
-    val pulseRadius = maxRadius * progress
-    val alpha = (1f - progress) * 0.5f
-
-    if (pulseRadius > 0) {
+    if (alpha > 0.01f) {
         drawCircle(
-            color = color.copy(alpha = alpha),
-            radius = pulseRadius,
-            center = center,
-            style = Stroke(width = 2.dp.toPx())
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFF00B4D8).copy(alpha = alpha * 0.5f),
+                    Color(0xFF00639A).copy(alpha = alpha),
+                    Color.Transparent
+                ),
+                center = Offset(centerX, centerY),
+                radius = radius
+            ),
+            radius = radius,
+            center = Offset(centerX, centerY)
         )
     }
 }
 
-private fun DrawScope.drawCenterDot(center: Offset, color: Color) {
+private fun DrawScope.drawRotatingScanner(
+    centerX: Float,
+    centerY: Float,
+    maxRadius: Float,
+    angle: Float
+) {
+    val radian = angle * (PI / 180f)
+    val endX = centerX + cos(radian) * maxRadius
+    val endY = centerY + sin(radian) * maxRadius
+
+    // Línea del scanner con gradiente
+    drawLine(
+        brush = Brush.linearGradient(
+            colors = listOf(
+                Color(0xFF00B4D8).copy(alpha = 0.9f),
+                Color(0xFF00B4D8).copy(alpha = 0.3f),
+                Color.Transparent
+            ),
+            start = Offset(centerX, centerY),
+            end = Offset(endX.toFloat(), endY.toFloat())
+        ),
+        start = Offset(centerX, centerY),
+        end = Offset(endX.toFloat(), endY.toFloat()),
+        strokeWidth = 3f,
+        cap = StrokeCap.Round
+    )
+
+    // Arco del scanner
+    drawArc(
+        color = Color(0xFF00B4D8).copy(alpha = 0.2f),
+        startAngle = angle - 30f,
+        sweepAngle = 60f,
+        useCenter = true,
+        topLeft = Offset(centerX - maxRadius, centerY - maxRadius),
+        size = androidx.compose.ui.geometry.Size(maxRadius * 2, maxRadius * 2)
+    )
+}
+
+private fun DrawScope.drawCenterPoint(
+    centerX: Float,
+    centerY: Float
+) {
+    // Círculo exterior
     drawCircle(
-        color = color,
-        radius = 6.dp.toPx(),
-        center = center
+        color = Color(0xFF00B4D8).copy(alpha = 0.3f),
+        radius = 12f,
+        center = Offset(centerX, centerY)
+    )
+
+    // Círculo medio
+    drawCircle(
+        color = Color(0xFF00B4D8).copy(alpha = 0.6f),
+        radius = 8f,
+        center = Offset(centerX, centerY)
+    )
+
+    // Punto central brillante
+    drawCircle(
+        color = Color(0xFFFFFFFF),
+        radius = 4f,
+        center = Offset(centerX, centerY)
     )
 }
