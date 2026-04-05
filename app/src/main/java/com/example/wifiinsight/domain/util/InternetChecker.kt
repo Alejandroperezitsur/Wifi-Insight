@@ -14,7 +14,6 @@ import java.net.URL
  * 
  * PATRONES DE RESILIENCIA:
  * - Retry con exponential backoff (3 intentos)
- * - Fallback a NetworkCapabilities si HTTP falla
  * - Circuit breaker (si falla 3 veces seguidas, usar cache extendido)
  * - Timeout agresivo (< 2s)
  */
@@ -141,7 +140,7 @@ class InternetChecker {
             val responseCode = connection.responseCode
             connection.disconnect()
             
-            responseCode == 204 || responseCode == 200
+            responseCode == 204
         } catch (e: Exception) {
             false
         }

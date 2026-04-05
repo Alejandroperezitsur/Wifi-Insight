@@ -86,6 +86,20 @@ object SystemSettingsHelper {
             false
         }
     }
+
+    fun openLocationSettings(context: Context): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            Log.d(TAG, "✓ Ajustes de ubicación abiertos")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "✗ Error abriendo ajustes de ubicación", e)
+            openGeneralSettings(context)
+        }
+    }
     
     /**
      * Abre ajustes generales del sistema (último fallback)

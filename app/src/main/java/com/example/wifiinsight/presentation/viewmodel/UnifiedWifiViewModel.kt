@@ -1,35 +1,27 @@
 package com.example.wifiinsight.presentation.viewmodel
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.wifiinsight.data.model.WifiState
-import com.example.wifiinsight.data.repository.WifiRepositoryImpl
+import com.example.wifiinsight.data.repository.WifiRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/**
- * ViewModel v3.3 - HARDENING FAANG LEVEL
- *
- * FIXES:
- * - Usa WifiState (Redux pattern) en lugar de WifiUiState
- * - Expone StateFlow<WifiState> directo del Repository
- * - Sin lógica de negocio (solo delega)
- */
-class UnifiedWifiViewModel(
-    private val repository: WifiRepositoryImpl
+@HiltViewModel
+class UnifiedWifiViewModel @Inject constructor(
+    private val repository: WifiRepository
 ) : ViewModel() {
 
-    /**
-     * SSOT: Estado Redux directo del Repository
-     */
-    val state: StateFlow<WifiState> = repository.state
-
-    init {
-        // Trigger scan inicial
-        viewModelScope.launch {
-            repository.scanNetworks()
-        }
-    }
+    val state: StateFlow<WifiState> = repository.uiState.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = repository.uiState.value
+    )
 
     fun scanNetworks() {
         viewModelScope.launch {
@@ -37,26 +29,31 @@ class UnifiedWifiViewModel(
         }
     }
 
-    fun retry() {
+    fun reEvaluateConnection() {
         viewModelScope.launch {
-            repository.retry()
+            repository.reEvaluateConnection()
         }
     }
 
-    fun updatePermissions(granted: Boolean, shouldShowRationale: Boolean = false) {
-        repository.updatePermissionState(granted, shouldShowRationale)
+    fun refreshSystemState(activity: Activity? = null) {
+        repository.refreshSystemState(activity)
     }
 
-    fun openWifiSettings(): Boolean {
-        return repository.openWifiSettings()
+    fun refreshPermissions(activity: Activity? = null) {
+        repository.refreshPermissions(activity)
     }
 
-    fun setDemoMode(enabled: Boolean) {
-        repository.setDemoMode(enabled)
+    fun markPermissionRequested() {
+        repository.markPermissionRequested()
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        repository.cleanup()
+    fun clearError() {
+        repository.clearError()
     }
+
+    fun openWifiSettings(): Boolean = repository.openWifiSettings()
+
+    fun openAppSettings(): Boolean = repository.openAppSettings()
+
+    fun openLocationSettings(): Boolean = repository.openLocationSettings()
 }

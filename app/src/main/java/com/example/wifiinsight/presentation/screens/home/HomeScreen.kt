@@ -1,10 +1,9 @@
 package com.example.wifiinsight.presentation.screens.home
 
+import android.app.Activity
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,7 +33,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -42,52 +40,40 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.wifiinsight.data.model.ConnectionState
 import com.example.wifiinsight.data.model.InternetStatus
+import com.example.wifiinsight.data.model.PermissionState
 import com.example.wifiinsight.data.model.WifiState
-import com.example.wifiinsight.domain.util.SystemSettingsHelper
-import com.example.wifiinsight.presentation.common.components.DemoModeBadge
+import com.example.wifiinsight.domain.util.SignalCalculator
+import com.example.wifiinsight.presentation.common.components.FeedbackTone
 import com.example.wifiinsight.presentation.common.components.SignalChart
+import com.example.wifiinsight.presentation.common.components.StateFeedbackCard
 import com.example.wifiinsight.presentation.viewmodel.UnifiedWifiViewModel
-import com.example.wifiinsight.data.repository.WifiRepositoryImpl
-import com.example.wifiinsight.domain.util.InternetChecker
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToScan: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: UnifiedWifiViewModel = hiltViewModel()
 ) {
+    val uiState by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val viewModel: UnifiedWifiViewModel = viewModel(
-        factory = remember {
-            object : androidx.lifecycle.ViewModelProvider.Factory {
-                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    val internetChecker = InternetChecker()
-                    val repository = WifiRepositoryImpl(context, internetChecker)
-                    @Suppress("UNCHECKED_CAST")
-                    return UnifiedWifiViewModel(repository) as T
-                }
-            }
-        }
-    )
-    val uiState by viewModel.state.collectAsState()
-
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-
-    // Observar lifecycle para detectar onResume y refrescar datos
+    val activity = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+
+    DisposableEffect(lifecycleOwner, activity) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.retry()
+                viewModel.refreshSystemState(activity)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -96,21 +82,20 @@ fun HomeScreen(
         }
     }
 
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        "WiFi Insight",
+                        text = "WiFi Insight",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
                 },
-                scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
-                )
+                scrollBehavior = scrollBehavior
             )
         },
         floatingActionButton = {
@@ -129,135 +114,250 @@ fun HomeScreen(
             }
         }
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            // Badge de modo demo
-            DemoModeBadge(
-                isDemoMode = uiState.isDemoMode,
-                modifier = Modifier.align(Alignment.TopCenter)
+            HomeStateAlerts(
+                state = uiState,
+                onOpenAppSettings = viewModel::openAppSettings,
+                onOpenLocationSettings = viewModel::openLocationSettings,
+                onDismissError = viewModel::clearError
             )
 
             when {
                 !uiState.wifiEnabled -> {
                     WifiDisabledState(
-                        onEnableWifi = { viewModel.openWifiSettings() },
-                        modifier = Modifier.fillMaxSize()
+                        onEnableWifi = viewModel::openWifiSettings,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
+
                 uiState.isConnected -> {
                     ConnectedContent(
                         uiState = uiState,
                         onNavigateToScan = onNavigateToScan,
-                        onRefresh = { viewModel.retry() },
-                        modifier = Modifier.fillMaxSize()
+                        onReEvaluate = viewModel::reEvaluateConnection,
+                        onOpenWifiSettings = viewModel::openWifiSettings
                     )
                 }
+
                 else -> {
                     DisconnectedContent(
-                        onRetry = { viewModel.retry() },
-                        onOpenSettings = { viewModel.openWifiSettings() },
-                        modifier = Modifier.fillMaxSize()
+                        isRefreshingConnection = uiState.isRefreshingConnection,
+                        onReEvaluate = viewModel::reEvaluateConnection,
+                        onOpenSettings = viewModel::openWifiSettings,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HomeStateAlerts(
+    state: WifiState,
+    onOpenAppSettings: () -> Boolean,
+    onOpenLocationSettings: () -> Boolean,
+    onDismissError: () -> Unit
+) {
+    if (state.isAirplaneMode) {
+        StateFeedbackCard(
+            title = "Modo avión activado",
+            message = "Desactiva el modo avión para recuperar el WiFi.",
+            tone = FeedbackTone.Warning
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    if (!state.locationEnabled) {
+        StateFeedbackCard(
+            title = "Ubicación desactivada",
+            message = "Activa ubicación para poder escanear redes cercanas.",
+            tone = FeedbackTone.Warning,
+            actionLabel = "Abrir ubicación",
+            onAction = { onOpenLocationSettings() }
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    when (state.permissionState) {
+        PermissionState.Denied -> {
+            StateFeedbackCard(
+                title = "Permiso pendiente",
+                message = "Permite ubicación para escanear redes WiFi.",
+                tone = FeedbackTone.Warning
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        PermissionState.PermanentlyDenied -> {
+            StateFeedbackCard(
+                title = "Permiso bloqueado",
+                message = "Activa los permisos desde Ajustes para volver a escanear redes.",
+                tone = FeedbackTone.Error,
+                actionLabel = "Abrir ajustes",
+                onAction = { onOpenAppSettings() }
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        PermissionState.Granted -> Unit
+    }
+
+    if (state.scanThrottleRemaining > 0) {
+        StateFeedbackCard(
+            title = "Escaneo en espera",
+            message = "Puedes escanear en ${state.scanThrottleRemaining}s.",
+            tone = FeedbackTone.Info
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    if (state.isRefreshingConnection) {
+        StateFeedbackCard(
+            title = "Re-evaluando conexión",
+            message = "Actualizando el estado real de la red y del acceso a internet.",
+            tone = FeedbackTone.Info
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    state.error?.let { error ->
+        StateFeedbackCard(
+            title = error.title,
+            message = error.message,
+            tone = FeedbackTone.Error,
+            actionLabel = "Cerrar",
+            onAction = onDismissError
+        )
+        Spacer(modifier = Modifier.height(12.dp))
     }
 }
 
 @Composable
 private fun ConnectedContent(
-    uiState: com.example.wifiinsight.data.model.WifiState,
+    uiState: WifiState,
     onNavigateToScan: () -> Unit,
-    onRefresh: () -> Unit,
-    modifier: Modifier = Modifier
+    onReEvaluate: () -> Unit,
+    onOpenWifiSettings: () -> Boolean
 ) {
-    val connection = uiState.run {
-        ConnectionState.Connected(
-            ssid = ssid ?: "Red Desconocida",
-            bssid = bssid ?: "",
-            ipAddress = ipAddress,
-            linkSpeed = linkSpeed,
-            rssi = signalStrength,
-            hasInternet = internetStatus == com.example.wifiinsight.data.model.InternetStatus.AVAILABLE,
-            isValidated = internetStatus == com.example.wifiinsight.data.model.InternetStatus.AVAILABLE,
-            internetStatus = when(internetStatus) {
-                com.example.wifiinsight.data.model.InternetStatus.AVAILABLE -> com.example.wifiinsight.data.model.InternetStatus.AVAILABLE
-                com.example.wifiinsight.data.model.InternetStatus.UNAVAILABLE -> com.example.wifiinsight.data.model.InternetStatus.UNAVAILABLE
-                com.example.wifiinsight.data.model.InternetStatus.CHECKING -> com.example.wifiinsight.data.model.InternetStatus.CHECKING
-                else -> com.example.wifiinsight.data.model.InternetStatus.UNKNOWN
-            }
-        )
-    }
+    val connection = ConnectionState.Connected(
+        ssid = uiState.ssid ?: "Red desconocida",
+        bssid = uiState.bssid.orEmpty(),
+        ipAddress = uiState.ipAddress,
+        linkSpeed = uiState.linkSpeed,
+        rssi = uiState.signalStrength,
+        hasInternet = uiState.internetStatus == InternetStatus.AVAILABLE,
+        isValidated = uiState.internetStatus == InternetStatus.AVAILABLE,
+        internetStatus = uiState.internetStatus
+    )
 
-    Column(
-        modifier = modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp)
-    ) {
-        // Card de red actual
-        com.example.wifiinsight.presentation.screens.home.components.CurrentNetworkCard(
-            connectionState = connection,
-            signalHistory = uiState.signalHistory,
-            modifier = Modifier.fillMaxWidth()
-        )
+    com.example.wifiinsight.presentation.screens.home.components.CurrentNetworkCard(
+        connectionState = connection,
+        modifier = Modifier.fillMaxWidth()
+    )
 
-        Spacer(modifier = Modifier.height(24.dp))
+    Spacer(modifier = Modifier.height(24.dp))
 
-        // Gráfica de señal
-        if (uiState.signalHistory.isNotEmpty()) {
-            SignalSection(signalHistory = uiState.signalHistory)
-            Spacer(modifier = Modifier.height(24.dp))
-        }
+    SignalSection(signalHistory = uiState.signalHistory)
 
-        // Acciones
-        ActionsSection(
-            onNavigateToScan = onNavigateToScan,
-            onRefresh = onRefresh
-        )
-    }
+    Spacer(modifier = Modifier.height(24.dp))
+
+    ActionsSection(
+        onNavigateToScan = onNavigateToScan,
+        onReEvaluate = onReEvaluate,
+        onOpenWifiSettings = onOpenWifiSettings,
+        isRefreshingConnection = uiState.isRefreshingConnection
+    )
 }
 
 @Composable
 private fun SignalSection(signalHistory: List<Int>) {
+    val validHistory = remember(signalHistory) {
+        signalHistory.filter { it != -127 }
+    }
+    val signalStatus = remember(validHistory) {
+        when {
+            validHistory.isEmpty() -> "Sin datos de señal"
+            validHistory.last() <= -80 -> "Señal débil"
+            SignalCalculator.analyzeStability(validHistory).isStable -> "Señal estable"
+            else -> "Señal inestable"
+        }
+    }
+
     Column {
         Text(
             text = "Señal en Tiempo Real",
             style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = signalStatus,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
         SignalChart(
-            signalHistory = signalHistory,
+            signalHistory = validHistory,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(140.dp)
+                .height(180.dp)
                 .clip(RoundedCornerShape(16.dp))
         )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        SignalReferenceRow()
     }
+}
+
+@Composable
+private fun SignalReferenceRow() {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        SignalReferenceItem("-30 dBm", "Excelente")
+        SignalReferenceItem("-70 dBm", "Aceptable")
+        SignalReferenceItem("-90 dBm", "Mala")
+    }
+}
+
+@Composable
+private fun SignalReferenceItem(dbm: String, label: String) {
+    Text(
+        text = "$dbm · $label",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(4.dp))
 }
 
 @Composable
 private fun ActionsSection(
     onNavigateToScan: () -> Unit,
-    onRefresh: () -> Unit
+    onReEvaluate: () -> Unit,
+    onOpenWifiSettings: () -> Boolean,
+    isRefreshingConnection: Boolean
 ) {
     Column {
         Text(
             text = "Acciones",
             style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
+            fontWeight = FontWeight.SemiBold
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Botón Principal: Escanear
         Button(
             onClick = onNavigateToScan,
             modifier = Modifier
@@ -267,50 +367,46 @@ private fun ActionsSection(
         ) {
             Icon(
                 imageVector = Icons.Default.Search,
-                contentDescription = null,
-                modifier = Modifier.size(24.dp)
+                contentDescription = null
             )
             Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                "Buscar Redes WiFi",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
+            Text("Escanear redes")
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Botón Secundario: Refresh
         Button(
-            onClick = onRefresh,
+            onClick = onReEvaluate,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
+            enabled = !isRefreshingConnection,
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer
             )
         ) {
-            Icon(
-                imageVector = Icons.Default.Refresh,
-                contentDescription = null,
-                modifier = Modifier.size(24.dp)
-            )
+            if (isRefreshingConnection) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null
+                )
+            }
             Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                "Actualizar Conexión",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
+            Text(if (isRefreshingConnection) "Re-evaluando..." else "Re-evaluar conexión")
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Botón Terciario: Ajustes
-        val settingsContext = LocalContext.current
         Button(
-            onClick = { SystemSettingsHelper.openWifiSettings(settingsContext) },
+            onClick = { onOpenWifiSettings() },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
@@ -320,18 +416,14 @@ private fun ActionsSection(
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
             )
         ) {
-            Text(
-                "Abrir Ajustes WiFi",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
+            Text("Abrir ajustes WiFi")
         }
     }
 }
 
 @Composable
 private fun WifiDisabledState(
-    onEnableWifi: () -> Unit,
+    onEnableWifi: () -> Boolean,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -352,52 +444,37 @@ private fun WifiDisabledState(
                 Icon(
                     imageVector = Icons.Default.WifiOff,
                     contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    modifier = Modifier.size(40.dp)
                 )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "WiFi Desactivado",
+                text = "WiFi desactivado",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
+                fontWeight = FontWeight.SemiBold
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Activa el WiFi para analizar redes cercanas",
+                text = "Activa WiFi para comenzar.",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Por seguridad, Android requiere que actives el WiFi manualmente",
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-            )
-
             Spacer(modifier = Modifier.height(24.dp))
 
             Button(
-                onClick = onEnableWifi,
+                onClick = { onEnableWifi() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text(
-                    "Abrir ajustes WiFi",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Text("Abrir ajustes WiFi")
             }
         }
     }
@@ -405,8 +482,9 @@ private fun WifiDisabledState(
 
 @Composable
 private fun DisconnectedContent(
-    onRetry: () -> Unit,
-    onOpenSettings: () -> Unit,
+    isRefreshingConnection: Boolean,
+    onReEvaluate: () -> Unit,
+    onOpenSettings: () -> Boolean,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -427,8 +505,7 @@ private fun DisconnectedContent(
                 Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    modifier = Modifier.size(40.dp)
                 )
             }
 
@@ -437,14 +514,13 @@ private fun DisconnectedContent(
             Text(
                 text = "Sin conexión WiFi",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
+                fontWeight = FontWeight.SemiBold
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "No estás conectado a ninguna red WiFi",
+                text = "No hay una red WiFi activa. Re-evalúa la conexión o escanea redes disponibles.",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -453,31 +529,35 @@ private fun DisconnectedContent(
             Spacer(modifier = Modifier.height(24.dp))
 
             Button(
-                onClick = onRetry,
+                onClick = onReEvaluate,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
+                enabled = !isRefreshingConnection,
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp)
-                )
+                if (isRefreshingConnection) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null
+                    )
+                }
                 Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    "Reintentar",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Text(if (isRefreshingConnection) "Re-evaluando..." else "Re-evaluar conexión")
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
             TextButton(
-                onClick = onOpenSettings
+                onClick = { onOpenSettings() }
             ) {
-                Text("Abrir ajustes")
+                Text("Abrir ajustes WiFi")
             }
         }
     }

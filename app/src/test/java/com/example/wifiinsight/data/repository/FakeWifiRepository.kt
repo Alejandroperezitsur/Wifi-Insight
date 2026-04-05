@@ -1,158 +1,118 @@
 package com.example.wifiinsight.data.repository
 
-import com.example.wifiinsight.data.model.ConnectionUiState
-import com.example.wifiinsight.data.model.ErrorUiState
-import com.example.wifiinsight.data.model.InternetStatus
+import android.app.Activity
 import com.example.wifiinsight.data.model.PermissionState
-import com.example.wifiinsight.data.model.ScanUiState
-import com.example.wifiinsight.data.model.SystemUiState
 import com.example.wifiinsight.data.model.UiError
 import com.example.wifiinsight.data.model.WifiNetwork
-import kotlinx.coroutines.flow.Flow
+import com.example.wifiinsight.data.model.WifiState
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
-/**
- * Fake Repository v3.1 - Estados Granulares para Testing
- * 
- * ARQUITECTURA:
- * - 4 StateFlows separados (Connection, Scan, System, Error)
- * - Simula comportamiento real del repository
- * - Control total de estados para tests
- */
 class FakeWifiRepository : WifiRepository {
 
-    private val _connectionState = MutableStateFlow(ConnectionUiState())
-    private val _scanState = MutableStateFlow(ScanUiState())
-    private val _systemState = MutableStateFlow(SystemUiState())
-    private val _errorState = MutableStateFlow(ErrorUiState())
-    
-    override fun observeConnectionState(): Flow<ConnectionUiState> = 
-        _connectionState.asStateFlow()
-    
-    override fun observeScanState(): Flow<ScanUiState> = 
-        _scanState.asStateFlow()
-    
-    override fun observeSystemState(): Flow<SystemUiState> = 
-        _systemState.asStateFlow()
-    
-    override fun observeErrorState(): Flow<ErrorUiState> = 
-        _errorState.asStateFlow()
+    private val _uiState = MutableStateFlow(
+        WifiState(
+            wifiEnabled = true,
+            locationEnabled = true,
+            permissionState = PermissionState.Granted
+        )
+    )
+
+    override val uiState: StateFlow<WifiState> = _uiState.asStateFlow()
+
+    private var nextPermissionState: PermissionState = PermissionState.Granted
 
     override suspend fun scanNetworks() {
-        _scanState.value = _scanState.value.copy(isScanning = true)
-        kotlinx.coroutines.delay(500)
-        _scanState.value = _scanState.value.copy(
-            isScanning = false,
-            scanResults = generateFakeNetworks(),
-            lastScanTimestamp = System.currentTimeMillis()
-        )
-    }
-
-    override suspend fun retry() {
-        _errorState.value = ErrorUiState()
-        scanNetworks()
-    }
-
-    override fun updatePermissionState(granted: Boolean, shouldShowRationale: Boolean) {
-        _systemState.value = _systemState.value.copy(
-            permissionState = when {
-                granted -> PermissionState.Granted
-                shouldShowRationale -> PermissionState.Denied(shouldShowRationale = true)
-                else -> PermissionState.Denied(shouldShowRationale = false)
-            }
-        )
-    }
-
-    override fun openWifiSettings(): Boolean = true
-
-    override fun setDemoMode(enabled: Boolean) {
-        _systemState.value = _systemState.value.copy(isDemoMode = enabled)
-        if (enabled) {
-            _scanState.value = _scanState.value.copy(
+        _uiState.update { it.copy(isScanning = true, error = null) }
+        _uiState.update {
+            it.copy(
+                isScanning = false,
                 scanResults = generateFakeNetworks()
             )
         }
     }
 
-    override fun cleanup() {
-        // No-op para testing
+    override suspend fun reEvaluateConnection() {
+        _uiState.update { it.copy(isRefreshingConnection = true, error = null) }
+        _uiState.update {
+            it.copy(
+                wifiEnabled = true,
+                isConnected = true,
+                ssid = "TestNetwork",
+                bssid = "00:11:22:33:44:55",
+                linkSpeed = 433,
+                signalStrength = -48,
+                isRefreshingConnection = false
+            )
+        }
     }
 
-    // ===== MÉTODOS DE AYUDA PARA TESTS =====
-
-    fun setWifiEnabled(enabled: Boolean) {
-        _systemState.value = _systemState.value.copy(wifiEnabled = enabled)
+    override suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<Unit> {
+        return Result.failure(NotImplementedError("WiFi connection not supported"))
     }
 
-    fun setConnected(ssid: String = "TestNetwork", hasInternet: Boolean = true) {
-        _connectionState.value = ConnectionUiState(
-            isConnected = true,
-            ssid = ssid,
-            bssid = "00:11:22:33:44:55",
-            ipAddress = "192.168.1.100",
-            linkSpeed = 866,
-            signalStrength = -50,
-            internetStatus = if (hasInternet) InternetStatus.VALIDATED else InternetStatus.NONE,
-            hasInternetCapability = true,
-            isInternetValidated = hasInternet
-        )
-        _systemState.value = _systemState.value.copy(wifiEnabled = true)
+    override fun refreshSystemState(activity: Activity?) = Unit
+
+    override fun refreshPermissions(activity: Activity?) {
+        _uiState.update { it.copy(permissionState = nextPermissionState) }
     }
 
-    fun setDisconnected() {
-        _connectionState.value = ConnectionUiState()
+    override fun markPermissionRequested() = Unit
+
+    override fun clearError() {
+        _uiState.update { it.copy(error = null) }
     }
 
-    fun setScanning(scanning: Boolean) {
-        _scanState.value = _scanState.value.copy(isScanning = scanning)
+    override fun openWifiSettings(): Boolean = true
+
+    override fun openAppSettings(): Boolean = true
+
+    override fun openLocationSettings(): Boolean = true
+
+    override fun getNetworkByBssid(bssid: String): WifiNetwork? {
+        return _uiState.value.scanResults.firstOrNull { it.bssid == bssid }
     }
 
-    fun setError(title: String, message: String) {
-        _errorState.value = ErrorUiState(
-            error = UiError(
-                title = title,
-                message = message,
-                isRecoverable = true
-            ),
-            hasError = true
-        )
+    fun setPermissionState(permissionState: PermissionState) {
+        nextPermissionState = permissionState
     }
 
-    fun clearError() {
-        _errorState.value = ErrorUiState()
+    fun setLocationEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(locationEnabled = enabled) }
     }
 
-    fun addSignalReading(rssi: Int) {
-        val current = _connectionState.value.signalHistory.toMutableList()
-        current.add(rssi)
-        if (current.size > 50) current.removeAt(0)
-        _connectionState.value = _connectionState.value.copy(signalHistory = current)
-    }
-
-    fun setThrottleRemaining(seconds: Int) {
-        _scanState.value = _scanState.value.copy(throttleRemainingSeconds = seconds)
+    fun setError(message: String) {
+        _uiState.update {
+            it.copy(
+                error = UiError(
+                    title = "Error",
+                    message = message
+                )
+            )
+        }
     }
 
     private fun generateFakeNetworks(): List<WifiNetwork> {
         return listOf(
             WifiNetwork(
-                ssid = "TestNetwork_5G",
                 bssid = "00:11:22:33:44:55",
+                ssid = "TestNetwork_5G",
                 rssi = -45,
                 frequency = 5200,
                 securityType = com.example.wifiinsight.data.model.SecurityType.WPA3
             ),
             WifiNetwork(
-                ssid = "TestNetwork_2.4G",
                 bssid = "00:11:22:33:44:66",
+                ssid = "TestNetwork_2.4G",
                 rssi = -55,
                 frequency = 2400,
                 securityType = com.example.wifiinsight.data.model.SecurityType.WPA2
             ),
             WifiNetwork(
-                ssid = "GuestNetwork",
                 bssid = "00:11:22:33:44:77",
+                ssid = "<Red oculta>",
                 rssi = -65,
                 frequency = 2400,
                 securityType = com.example.wifiinsight.data.model.SecurityType.OPEN

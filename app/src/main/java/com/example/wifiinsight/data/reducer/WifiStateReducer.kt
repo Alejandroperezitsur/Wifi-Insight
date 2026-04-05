@@ -16,12 +16,15 @@ object WifiStateReducer {
         return when (event) {
             is WifiEvent.WifiToggled -> state.copy(
                 wifiEnabled = event.enabled,
-                isConnected = false,
-                ssid = null,
-                bssid = null,
-                ipAddress = null,
-                signalHistory = emptyList(),
-                signalStrength = null,
+                isConnected = if (event.enabled) state.isConnected else false,
+                ssid = if (event.enabled) state.ssid else null,
+                bssid = if (event.enabled) state.bssid else null,
+                ipAddress = if (event.enabled) state.ipAddress else null,
+                linkSpeed = if (event.enabled) state.linkSpeed else null,
+                signalHistory = if (event.enabled) state.signalHistory else emptyList(),
+                signalStrength = if (event.enabled) state.signalStrength else null,
+                internetStatus = if (event.enabled) state.internetStatus else InternetStatus.UNKNOWN,
+                isRefreshingConnection = if (event.enabled) state.isRefreshingConnection else false,
                 stateVersion = state.stateVersion + 1
             )
 
@@ -29,22 +32,44 @@ object WifiStateReducer {
                 isAirplaneMode = event.enabled,
                 wifiEnabled = if (event.enabled) false else state.wifiEnabled,
                 isConnected = if (event.enabled) false else state.isConnected,
+                ssid = if (event.enabled) null else state.ssid,
+                bssid = if (event.enabled) null else state.bssid,
+                ipAddress = if (event.enabled) null else state.ipAddress,
+                linkSpeed = if (event.enabled) null else state.linkSpeed,
+                signalStrength = if (event.enabled) null else state.signalStrength,
+                signalHistory = if (event.enabled) emptyList() else state.signalHistory,
+                internetStatus = if (event.enabled) InternetStatus.UNKNOWN else state.internetStatus,
+                isRefreshingConnection = if (event.enabled) false else state.isRefreshingConnection,
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ConnectionChanged -> {
-                val isNewConnection = event.ssid != state.ssid
-                state.copy(
-                    isConnected = event.ssid != null,
-                    ssid = event.ssid,
-                    bssid = event.bssid,
-                    ipAddress = event.ipAddress,
-                    linkSpeed = event.linkSpeed,
-                    signalStrength = event.rssi,
-                    signalHistory = if (isNewConnection) emptyList() else state.signalHistory,
-                    internetStatus = if (isNewConnection) InternetStatus.UNKNOWN else state.internetStatus,
-                    stateVersion = state.stateVersion + 1
-                )
+                if (event.ssid == null) {
+                    state.copy(
+                        isConnected = false,
+                        ssid = null,
+                        bssid = null,
+                        ipAddress = null,
+                        linkSpeed = null,
+                        signalStrength = null,
+                        signalHistory = emptyList(),
+                        internetStatus = InternetStatus.UNKNOWN,
+                        stateVersion = state.stateVersion + 1
+                    )
+                } else {
+                    val isNewConnection = event.ssid != state.ssid || event.bssid != state.bssid
+                    state.copy(
+                        isConnected = true,
+                        ssid = event.ssid,
+                        bssid = event.bssid,
+                        ipAddress = event.ipAddress,
+                        linkSpeed = event.linkSpeed,
+                        signalStrength = event.rssi,
+                        signalHistory = if (isNewConnection) emptyList() else state.signalHistory,
+                        internetStatus = if (isNewConnection) InternetStatus.UNKNOWN else state.internetStatus,
+                        stateVersion = state.stateVersion + 1
+                    )
+                }
             }
 
             is WifiEvent.SignalUpdated -> {
@@ -77,6 +102,17 @@ object WifiStateReducer {
                 stateVersion = state.stateVersion + 1
             )
 
+            is WifiEvent.ConnectionRefreshStarted -> state.copy(
+                isRefreshingConnection = true,
+                error = null,
+                stateVersion = state.stateVersion + 1
+            )
+
+            is WifiEvent.ConnectionRefreshFinished -> state.copy(
+                isRefreshingConnection = false,
+                stateVersion = state.stateVersion + 1
+            )
+
             is WifiEvent.InternetCheckStarted -> state.copy(
                 internetStatus = InternetStatus.CHECKING,
                 stateVersion = state.stateVersion + 1
@@ -94,17 +130,11 @@ object WifiStateReducer {
 
             is WifiEvent.LocationStateChanged -> state.copy(
                 locationEnabled = event.enabled,
-                permissionState = if (!event.enabled) PermissionState.LocationDisabled else state.permissionState,
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ThrottleUpdated -> state.copy(
                 scanThrottleRemaining = event.remainingSeconds,
-                stateVersion = state.stateVersion + 1
-            )
-
-            is WifiEvent.DemoModeToggled -> state.copy(
-                isDemoMode = event.enabled,
                 stateVersion = state.stateVersion + 1
             )
 

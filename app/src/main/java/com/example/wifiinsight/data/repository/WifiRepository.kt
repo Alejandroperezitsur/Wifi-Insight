@@ -1,70 +1,32 @@
 package com.example.wifiinsight.data.repository
 
+import android.app.Activity
 import com.example.wifiinsight.data.model.WifiNetwork
-import com.example.wifiinsight.data.model.WifiUiState
-import kotlinx.coroutines.flow.Flow
+import com.example.wifiinsight.data.model.WifiState
 import kotlinx.coroutines.flow.StateFlow
 
-/**
- * Interfaz Repository v3.2 - PRODUCTION READY
- *
- * ARQUITECTURA:
- * - SSOT: Un único StateFlow<WifiUiState>
- * - Sin flows separados (eliminado anti-patrón de múltiples fuentes)
- * - UI observa solo uiState
- */
 interface WifiRepository {
+    val uiState: StateFlow<WifiState>
 
-    /**
-     * SINGLE SOURCE OF TRUTH
-     * Estado unificado que incluye toda la información UI.
-     */
-    val uiState: StateFlow<WifiUiState>
-
-    /**
-     * Inicia escaneo de redes.
-     * Resultado via uiState.
-     */
     suspend fun scanNetworks()
 
-    /**
-     * Reintenta operación.
-     */
-    suspend fun retry()
+    suspend fun reEvaluateConnection()
 
-    /**
-     * Actualiza estado de permisos.
-     */
-    fun updatePermissionState(granted: Boolean, shouldShowRationale: Boolean = false)
+    suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<Unit>
 
-    /**
-     * Abre settings de WiFi.
-     */
+    fun refreshSystemState(activity: Activity? = null)
+
+    fun refreshPermissions(activity: Activity? = null)
+
+    fun markPermissionRequested()
+
+    fun clearError()
+
     fun openWifiSettings(): Boolean
 
-    /**
-     * Activa/desactiva modo demo.
-     */
-    fun setDemoMode(enabled: Boolean)
+    fun openAppSettings(): Boolean
 
-    /**
-     * Limpia recursos.
-     */
-    fun cleanup()
+    fun openLocationSettings(): Boolean
 
-    /**
-     * Obtiene historial de escaneo (para compatibilidad)
-     */
-    fun getScanHistory(): List<WifiNetwork>
-
-    /**
-     * Conecta a una red WiFi
-     */
-    fun connectToNetwork(network: WifiNetwork, password: String?): Flow<Result<Boolean>>
-
-    // ===== MÉTODOS LEGACY (para compatibilidad) =====
-    fun observeConnectionState(): StateFlow<WifiUiState>
-    fun observeScanState(): StateFlow<WifiUiState>
-    fun observeSystemState(): StateFlow<WifiUiState>
-    fun observeErrorState(): StateFlow<WifiUiState>
+    fun getNetworkByBssid(bssid: String): WifiNetwork?
 }

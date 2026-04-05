@@ -1,119 +1,121 @@
 package com.example.wifiinsight.presentation.screens.detail
 
+import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.wifiinsight.data.model.NetworkQuality
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.repository.WifiRepository
-import com.example.wifiinsight.domain.usecase.ConnectToNetworkUseCase
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-sealed class DetailUiState {
-    data object Loading : DetailUiState()
-    data class Success(
-        val network: WifiNetwork,
-        val networkQuality: NetworkQuality,
-        val isConnecting: Boolean = false
-    ) : DetailUiState()
-    data class Error(val message: String) : DetailUiState()
-    data class ConnectionResult(val success: Boolean, val message: String) : DetailUiState()
+sealed class ConnectionResultState {
+    data object Idle : ConnectionResultState()
+    data object Loading : ConnectionResultState()
+    data class Success(val message: String) : ConnectionResultState()
+    data class Error(val message: String) : ConnectionResultState()
 }
 
-class NetworkDetailViewModel(
+data class NetworkDetailUiState(
+    val isLoading: Boolean = true,
+    val network: WifiNetwork? = null,
+    val password: String = "",
+    val connectionResult: ConnectionResultState = ConnectionResultState.Idle,
+    val errorMessage: String? = null
+)
+
+private data class DetailLocalState(
+    val password: String = "",
+    val connectionResult: ConnectionResultState = ConnectionResultState.Idle,
+    val lastKnownNetwork: WifiNetwork? = null
+)
+
+@HiltViewModel
+class NetworkDetailViewModel @Inject constructor(
     private val repository: WifiRepository,
-    private val connectToNetworkUseCase: ConnectToNetworkUseCase,
-    private val savedStateHandle: SavedStateHandle
+    savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow<DetailUiState>(DetailUiState.Loading)
-    val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
+    private val bssid = Uri.decode(savedStateHandle.get<String>("bssid").orEmpty())
+    private val initialNetwork = repository.getNetworkByBssid(bssid)
 
-    private val _password = MutableStateFlow("")
-    val password: StateFlow<String> = _password.asStateFlow()
+    private val localState = MutableStateFlow(
+        DetailLocalState(lastKnownNetwork = initialNetwork)
+    )
 
-    init {
-        loadNetworkDetails()
-    }
-
-    private fun loadNetworkDetails() {
-        viewModelScope.launch {
-            val networkId = savedStateHandle.get<String>("networkId") ?: return@launch
-
-            val networks = repository.getScanHistory()
-            val network = networks.find { it.id == networkId }
-
-            if (network != null) {
-                val quality = NetworkQuality.fromRssi(network.rssi)
-                _uiState.value = DetailUiState.Success(
-                    network = network,
-                    networkQuality = quality
-                )
+    val uiState: StateFlow<NetworkDetailUiState> = combine(
+        repository.uiState
+            .map { repository.getNetworkByBssid(bssid) }
+            .onEach { network ->
+                if (network != null) {
+                    localState.update { it.copy(lastKnownNetwork = network) }
+                }
+            },
+        localState
+    ) { liveNetwork, local ->
+        val resolvedNetwork = liveNetwork ?: local.lastKnownNetwork
+        NetworkDetailUiState(
+            isLoading = false,
+            network = resolvedNetwork,
+            password = local.password,
+            connectionResult = local.connectionResult,
+            errorMessage = if (resolvedNetwork == null) {
+                "Red no disponible. Escanea de nuevo para cargar sus detalles."
             } else {
-                _uiState.value = DetailUiState.Error("Red no encontrada")
+                null
             }
-        }
-    }
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = NetworkDetailUiState(
+            isLoading = false,
+            network = initialNetwork,
+            errorMessage = if (initialNetwork == null) {
+                "Red no disponible. Escanea de nuevo para cargar sus detalles."
+            } else {
+                null
+            }
+        )
+    )
 
     fun updatePassword(password: String) {
-        _password.value = password
+        localState.update { it.copy(password = password) }
+    }
+
+    fun dismissConnectionResult() {
+        localState.update { it.copy(connectionResult = ConnectionResultState.Idle) }
     }
 
     fun connectToNetwork() {
-        val currentState = _uiState.value
-        if (currentState !is DetailUiState.Success) return
+        val network = uiState.value.network ?: localState.value.lastKnownNetwork ?: return
+        val password = uiState.value.password.ifBlank { null }
 
-        val network = currentState.network
-        val password = _password.value
+        viewModelScope.launch {
+            localState.update {
+                it.copy(connectionResult = ConnectionResultState.Loading)
+            }
 
-        _uiState.value = currentState.copy(isConnecting = true)
-
-        connectToNetworkUseCase(network, password.takeIf { it.isNotEmpty() })
-            .onEach { result ->
-                result.fold(
-                    onSuccess = {
-                        _uiState.value = DetailUiState.ConnectionResult(
-                            success = true,
-                            message = "Solicitud de conexión enviada. Revisa las notificaciones del sistema."
-                        )
-                    },
-                    onFailure = { error ->
-                        _uiState.value = DetailUiState.ConnectionResult(
-                            success = false,
-                            message = error.message ?: "Error al conectar"
+            val result = repository.connectToNetwork(network, password)
+            localState.update { current ->
+                current.copy(
+                    connectionResult = if (result.isSuccess) {
+                        ConnectionResultState.Success("Conexión iniciada.")
+                    } else {
+                        ConnectionResultState.Error(
+                            result.exceptionOrNull()?.message ?: "No se pudo conectar"
                         )
                     }
                 )
-            }
-            .catch { error ->
-                _uiState.value = DetailUiState.ConnectionResult(
-                    success = false,
-                    message = error.message ?: "Error inesperado"
-                )
-            }
-            .launchIn(viewModelScope)
-    }
-
-    companion object {
-        fun provideFactory(
-            repository: WifiRepository,
-            connectToNetworkUseCase: ConnectToNetworkUseCase,
-            savedStateHandle: SavedStateHandle
-        ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return NetworkDetailViewModel(
-                    repository,
-                    connectToNetworkUseCase,
-                    savedStateHandle
-                ) as T
             }
         }
     }

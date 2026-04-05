@@ -2,12 +2,10 @@ package com.example.wifiinsight.data.model
 
 import android.net.wifi.ScanResult
 import com.example.wifiinsight.domain.util.SignalCalculator
-import java.util.UUID
 
 data class WifiNetwork(
-    val id: String = UUID.randomUUID().toString(),
-    val ssid: String,
     val bssid: String,
+    val ssid: String,
     val rssi: Int,
     val frequency: Int,
     val securityType: SecurityType,
@@ -40,9 +38,11 @@ data class WifiNetwork(
 
     companion object {
         fun fromScanResult(scanResult: ScanResult): WifiNetwork {
+            val safeBssid = scanResult.BSSID.orEmpty()
+            val safeSsid = scanResult.SSID.orEmpty().ifBlank { "<Red oculta>" }
             return WifiNetwork(
-                ssid = scanResult.SSID ?: "<Hidden Network>",
-                bssid = scanResult.BSSID ?: "",
+                bssid = safeBssid,
+                ssid = safeSsid,
                 rssi = scanResult.level,
                 frequency = scanResult.frequency,
                 securityType = parseSecurityType(scanResult.capabilities),

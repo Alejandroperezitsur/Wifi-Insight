@@ -2,11 +2,13 @@ package com.example.wifiinsight.data.repository
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -14,17 +16,17 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.SystemClock
-import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
+import com.example.wifiinsight.data.model.UiError
 import com.example.wifiinsight.data.model.WifiEvent
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.model.WifiState
 import com.example.wifiinsight.data.reducer.WifiStateReducer
-import com.example.wifiinsight.domain.util.DemoModeManager
 import com.example.wifiinsight.domain.util.InternetChecker
+import com.example.wifiinsight.domain.util.PermissionHandler
 import com.example.wifiinsight.domain.util.SettingsHelper
 import com.example.wifiinsight.domain.util.SystemSettingsHelper
 import com.example.wifiinsight.domain.util.WifiStateMonitor
@@ -32,386 +34,598 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/**
- * Repository v3.3-FIXED - STAFF ENGINEER LEVEL
- *
- * FIXES APLICADOS:
- * 1. State versioning REAL (atomic compare dentro de update)
- * 2. SharedFlow DROP_OLDEST (no pierde eventos críticos)
- * 3. Reducer 100% puro (lógica extraída)
- * 4. Event priority separado (high vs low)
- * 5. Internet debounce (anti-flicker)
- * 6. Flood protection (conflate para signal)
- */
 class WifiRepositoryImpl(
     private val context: Context,
     private val internetChecker: InternetChecker
 ) : WifiRepository {
 
     companion object {
-        private const val TAG = "WiFiRepo.v3.3-FIXED"
+        private const val TAG = "WifiRepository"
         private const val SCAN_THROTTLE_MS = 30_000L
         private const val SCAN_TIMEOUT_MS = 10_000L
-        private const val EVENT_BUFFER = 128
-        private const val INTERNET_DEBOUNCE_MS = 300L
+        private const val INTERNET_TIMEOUT_MS = 5_000L
+        private const val STOP_MONITORING_DELAY_MS = 5_000L
     }
 
-    // ===== SCOPE CONTROLADO =====
-    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val jobs = mutableListOf<Job>()
-
-    // ===== EVENT PIPELINE CON DROP_OLDEST (NO PIERDE EVENTOS) =====
-    private val highPriorityEvents = MutableSharedFlow<WifiEvent>(
-        extraBufferCapacity = EVENT_BUFFER,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-    private val lowPriorityEvents = MutableSharedFlow<WifiEvent>(
-        extraBufferCapacity = 32,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    private data class SystemSnapshot(
+        val wifiEnabled: Boolean,
+        val isAirplaneMode: Boolean,
+        val locationEnabled: Boolean,
+        val permissionState: PermissionState,
+        val serviceError: UiError? = null
     )
 
-    // ===== STATE VERSIONING REAL =====
-    private val nextVersion = AtomicLong(1)
+    private val appContext = context.applicationContext
+    private val repositoryDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val repositoryScope = CoroutineScope(SupervisorJob() + repositoryDispatcher)
+    private val permissionHandler = PermissionHandler(appContext)
+    private val preferences = appContext.getSharedPreferences("wifi_repository", Context.MODE_PRIVATE)
+    private val scanMutex = Mutex()
 
-    // ===== SSOT =====
-    private val _state = MutableStateFlow(WifiState())
-    val state: StateFlow<WifiState> = _state.asStateFlow()
+    private val wifiManager: WifiManager? by lazy {
+        appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    }
+    private val connectivityManager: ConnectivityManager? by lazy {
+        appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    }
 
-    // LEGACY compatibility
-    override val uiState: StateFlow<com.example.wifiinsight.data.model.WifiUiState>
-        get() = MutableStateFlow(com.example.wifiinsight.data.model.WifiUiState())
+    private val _uiState = MutableStateFlow(WifiState())
+    override val uiState: StateFlow<WifiState> = _uiState.asStateFlow()
 
-    // ===== THROTTLE (elapsedRealtime) =====
-    private val isScanningAtomic = AtomicBoolean(false)
+    private var monitoringJobs: List<Job> = emptyList()
+    private var monitoringStopJob: Job? = null
     private var lastScanElapsedTime = 0L
     private var throttleJob: Job? = null
-
-    // ===== MANAGERS =====
-    private val wifiManager: WifiManager by lazy {
-        context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-    }
-    private val connectivityManager: ConnectivityManager by lazy {
-        context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    }
-    private val demoModeManager = DemoModeManager()
+    private var internetCheckJob: Job? = null
+    private var currentInternetTarget: String? = null
 
     init {
-        // Event processor HIGH priority (inmediato)
-        jobs += repositoryScope.launch {
-            highPriorityEvents.collect { event ->
-                processEvent(event)
-            }
-        }
+        observeUiSubscriptions()
+        refreshSystemState()
+    }
 
-        // Event processor LOW priority (conflate para reducir ruido)
-        jobs += repositoryScope.launch {
-            lowPriorityEvents
-                .conflate() // Solo procesa el más reciente
-                .collect { event ->
-                    processEvent(event)
-                }
-        }
+    override suspend fun scanNetworks() {
+        withContext(repositoryDispatcher) {
+            scanMutex.withLock {
+                val snapshot = readSystemSnapshot()
+                applySystemSnapshot(snapshot)
 
-        // Internet debounce (anti-flicker)
-        jobs += repositoryScope.launch {
-            lowPriorityEvents
-                .debounce(INTERNET_DEBOUNCE_MS)
-                .collect { event ->
-                    if (event is WifiEvent.InternetChecked) {
-                        processEvent(event)
+                when {
+                    snapshot.serviceError != null -> {
+                        dispatch(WifiEvent.ScanFailed(snapshot.serviceError.message))
+                        return@withContext
+                    }
+
+                    snapshot.isAirplaneMode -> {
+                        dispatchError(
+                            title = "Modo avión activado",
+                            message = "Desactiva el modo avión para escanear redes WiFi."
+                        )
+                        return@withContext
+                    }
+
+                    !snapshot.wifiEnabled -> {
+                        dispatchError(
+                            title = "WiFi desactivado",
+                            message = "Abre ajustes WiFi para activar la red inalámbrica."
+                        )
+                        return@withContext
+                    }
+
+                    !snapshot.locationEnabled -> {
+                        dispatchError(
+                            title = "Ubicación desactivada",
+                            message = "Activa la ubicación para escanear redes WiFi."
+                        )
+                        return@withContext
+                    }
+
+                    snapshot.permissionState != PermissionState.Granted -> {
+                        dispatchError(
+                            title = "Permisos requeridos",
+                            message = "Permite los permisos necesarios para escanear redes WiFi."
+                        )
+                        return@withContext
                     }
                 }
-        }
 
-        // Iniciar monitoreos
-        startEventDrivenMonitoring()
-        emitInitialState()
-    }
+                val elapsed = SystemClock.elapsedRealtime() - lastScanElapsedTime
+                if (elapsed < SCAN_THROTTLE_MS) {
+                    val remaining = ((SCAN_THROTTLE_MS - elapsed) / 1000L).toInt().coerceAtLeast(1)
+                    startThrottleCountdown(remaining)
+                    dispatchError(
+                        title = "Escaneo limitado",
+                        message = "Puedes escanear en ${remaining}s."
+                    )
+                    return@withContext
+                }
 
-    // ===== PROCESS EVENT CON VERSIONING REAL =====
-    private fun processEvent(event: WifiEvent) {
-        val proposedVersion = nextVersion.getAndIncrement()
+                dispatch(WifiEvent.ScanStarted)
+                stopThrottleCountdown()
 
-        // Atomic update con version check
-        _state.update { currentState ->
-            // Si el estado actual tiene versión mayor, rechazamos este update
-            if (currentState.stateVersion > proposedVersion) {
-                Log.w(TAG, "Rejecting stale event v$proposedVersion, current v${currentState.stateVersion}")
-                return@update currentState
+                try {
+                    val results = performRealScan()
+                    lastScanElapsedTime = SystemClock.elapsedRealtime()
+                    dispatch(WifiEvent.ScanCompleted(results))
+                    dispatch(WifiEvent.ThrottleUpdated(0))
+                } catch (error: Exception) {
+                    Log.e(TAG, "scanNetworks failed", error)
+                    dispatch(
+                        WifiEvent.ScanFailed(
+                            error.message ?: "No se pudo completar el escaneo de redes."
+                        )
+                    )
+                }
             }
-
-            val newState = WifiStateReducer.reduce(currentState, event)
-            logStateChange(event, newState, proposedVersion)
-            newState.copy(stateVersion = proposedVersion)
         }
     }
 
-    // ===== EMIT CON PRIORIDAD =====
-    private fun emitHigh(event: WifiEvent) {
-        highPriorityEvents.tryEmit(event)
+    override suspend fun reEvaluateConnection() {
+        withContext(repositoryDispatcher) {
+            dispatch(WifiEvent.ConnectionRefreshStarted)
+            try {
+                internetChecker.invalidateCache()
+                refreshSystemStateInternal(forceInternetCheck = true)
+            } finally {
+                dispatch(WifiEvent.ConnectionRefreshFinished)
+            }
+        }
     }
 
-    private fun emitLow(event: WifiEvent) {
-        lowPriorityEvents.tryEmit(event)
+    override suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<Unit> {
+        val error = NotImplementedError("WiFi connection not supported")
+        Log.w(TAG, "connectToNetwork blocked for ${network.bssid}", error)
+        return Result.failure(error)
     }
 
-    // ===== EVENT-DRIVEN MONITORING =====
-    private fun startEventDrivenMonitoring() {
-        // WiFi state changes (HIGH priority)
-        jobs += repositoryScope.launch {
-            WifiStateMonitor(context).wifiStateFlow
+    override fun refreshSystemState(activity: Activity?) {
+        repositoryScope.launch {
+            refreshSystemStateInternal(
+                activity = activity,
+                forceInternetCheck = true
+            )
+        }
+    }
+
+    override fun refreshPermissions(activity: Activity?) {
+        applySystemSnapshot(readSystemSnapshot(activity))
+    }
+
+    override fun markPermissionRequested() {
+        preferences.edit().putBoolean("permission_requested", true).apply()
+    }
+
+    override fun clearError() {
+        dispatch(WifiEvent.ErrorCleared)
+    }
+
+    override fun openWifiSettings(): Boolean = SystemSettingsHelper.openWifiSettings(appContext)
+
+    override fun openAppSettings(): Boolean = SystemSettingsHelper.openAppSettings(appContext)
+
+    override fun openLocationSettings(): Boolean = SystemSettingsHelper.openLocationSettings(appContext)
+
+    override fun getNetworkByBssid(bssid: String): WifiNetwork? {
+        return _uiState.value.scanResults.firstOrNull { it.bssid == bssid }
+    }
+
+    private fun observeUiSubscriptions() {
+        repositoryScope.launch {
+            _uiState.subscriptionCount
+                .map { it > 0 }
                 .distinctUntilChanged()
-                .collect { wifiState ->
-                    when (wifiState) {
-                        is com.example.wifiinsight.domain.util.WifiState.Connected -> {
-                            emitHigh(WifiEvent.WifiToggled(true))
-                            updateConnectionState()
-                        }
-                        is com.example.wifiinsight.domain.util.WifiState.EnabledDisconnected -> {
-                            emitHigh(WifiEvent.WifiToggled(true))
-                            emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
-                        }
-                        is com.example.wifiinsight.domain.util.WifiState.Disabled -> {
-                            emitHigh(WifiEvent.WifiToggled(false))
-                        }
-                        is com.example.wifiinsight.domain.util.WifiState.AirplaneMode -> {
-                            emitHigh(WifiEvent.AirplaneModeChanged(true))
-                        }
-                        else -> {}
+                .collectLatest { hasSubscribers ->
+                    if (hasSubscribers) {
+                        monitoringStopJob?.cancel()
+                        startMonitoringIfNeeded()
+                        refreshSystemStateInternal(forceInternetCheck = true)
+                    } else {
+                        scheduleMonitoringStop()
                     }
                 }
         }
+    }
 
-        // Signal updates (LOW priority - conflateado)
+    private fun scheduleMonitoringStop() {
+        monitoringStopJob?.cancel()
+        monitoringStopJob = repositoryScope.launch {
+            delay(STOP_MONITORING_DELAY_MS)
+            stopMonitoring()
+        }
+    }
+
+    private fun startMonitoringIfNeeded() {
+        if (monitoringJobs.isNotEmpty()) {
+            return
+        }
+        monitoringJobs = startMonitoring()
+    }
+
+    private fun stopMonitoring() {
+        monitoringJobs.forEach(Job::cancel)
+        monitoringJobs = emptyList()
+        internetCheckJob?.cancel()
+    }
+
+    private fun readSystemSnapshot(activity: Activity? = null): SystemSnapshot {
+        return try {
+            val wifiService = wifiManager
+            val permissionWasRequested = preferences.getBoolean("permission_requested", false)
+            val permissionState = when {
+                permissionHandler.hasAllPermissions() -> PermissionState.Granted
+                activity != null && permissionWasRequested && permissionHandler.isPermanentlyDenied(activity) -> {
+                    PermissionState.PermanentlyDenied
+                }
+                else -> PermissionState.Denied
+            }
+
+            SystemSnapshot(
+                wifiEnabled = wifiService?.isWifiEnabled == true,
+                isAirplaneMode = SettingsHelper.isAirplaneModeOn(appContext),
+                locationEnabled = SettingsHelper.isLocationEnabled(appContext),
+                permissionState = permissionState,
+                serviceError = if (wifiService == null) {
+                    UiError(
+                        title = "Servicio WiFi no disponible",
+                        message = "El sistema no permitió acceder al servicio WiFi."
+                    )
+                } else {
+                    null
+                }
+            )
+        } catch (error: SecurityException) {
+            SystemSnapshot(
+                wifiEnabled = false,
+                isAirplaneMode = SettingsHelper.isAirplaneModeOn(appContext),
+                locationEnabled = SettingsHelper.isLocationEnabled(appContext),
+                permissionState = PermissionState.Denied,
+                serviceError = UiError(
+                    title = "Permisos requeridos",
+                    message = "No fue posible leer el estado WiFi por falta de permisos."
+                )
+            )
+        } catch (error: Exception) {
+            SystemSnapshot(
+                wifiEnabled = false,
+                isAirplaneMode = false,
+                locationEnabled = SettingsHelper.isLocationEnabled(appContext),
+                permissionState = PermissionState.Denied,
+                serviceError = UiError(
+                    title = "Error del sistema",
+                    message = "No fue posible leer el estado actual del dispositivo."
+                )
+            )
+        }
+    }
+
+    private fun applySystemSnapshot(snapshot: SystemSnapshot) {
+        dispatch(WifiEvent.WifiToggled(snapshot.wifiEnabled))
+        dispatch(WifiEvent.AirplaneModeChanged(snapshot.isAirplaneMode))
+        dispatch(WifiEvent.LocationStateChanged(snapshot.locationEnabled))
+        dispatch(WifiEvent.PermissionUpdated(snapshot.permissionState))
+        snapshot.serviceError?.let { error ->
+            dispatch(WifiEvent.ErrorOccurred(error))
+        }
+    }
+
+    private fun refreshSystemStateInternal(
+        activity: Activity? = null,
+        forceInternetCheck: Boolean
+    ) {
+        val snapshot = readSystemSnapshot(activity)
+        applySystemSnapshot(snapshot)
+
+        if (snapshot.serviceError != null) {
+            dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+            dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+            return
+        }
+
+        updateConnectionState(forceInternetCheck = forceInternetCheck)
+    }
+
+    private fun startMonitoring(): List<Job> {
+        val jobs = mutableListOf<Job>()
+
         jobs += repositoryScope.launch {
-            observeSignalChanges()
-                .conflate() // Solo último valor si hay flood
-                .collect { rssi ->
-                    if (_state.value.isConnected) {
-                        emitLow(WifiEvent.SignalUpdated(rssi))
+            try {
+                WifiStateMonitor(appContext).wifiStateFlow
+                    .distinctUntilChanged()
+                    .collectLatest { wifiState ->
+                        when (wifiState) {
+                            is com.example.wifiinsight.domain.util.WifiState.Connected -> {
+                                dispatch(WifiEvent.AirplaneModeChanged(false))
+                                dispatch(WifiEvent.WifiToggled(true))
+                                updateConnectionState(forceInternetCheck = false)
+                            }
+
+                            is com.example.wifiinsight.domain.util.WifiState.EnabledDisconnected -> {
+                                dispatch(WifiEvent.AirplaneModeChanged(false))
+                                dispatch(WifiEvent.WifiToggled(true))
+                                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+                            }
+
+                            is com.example.wifiinsight.domain.util.WifiState.Disabled -> {
+                                dispatch(WifiEvent.AirplaneModeChanged(false))
+                                dispatch(WifiEvent.WifiToggled(false))
+                                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+                            }
+
+                            is com.example.wifiinsight.domain.util.WifiState.AirplaneMode -> {
+                                dispatch(WifiEvent.AirplaneModeChanged(true))
+                                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+                            }
+
+                            is com.example.wifiinsight.domain.util.WifiState.Error -> {
+                                dispatchError("Estado WiFi inválido", wifiState.message)
+                            }
+                        }
                     }
-                }
+            } catch (error: SecurityException) {
+                dispatchError("Permisos insuficientes", "No fue posible seguir monitoreando el WiFi.")
+            } catch (error: Exception) {
+                Log.e(TAG, "WifiStateMonitor failed", error)
+            }
         }
 
-        // Network changes (HIGH priority)
         jobs += repositoryScope.launch {
-            observeNetworkChanges().collect { _ ->
-                updateConnectionState()
+            try {
+                observeNetworkChanges()
+                    .conflate()
+                    .collectLatest {
+                        updateConnectionState(forceInternetCheck = false)
+                    }
+            } catch (error: SecurityException) {
+                dispatchError("Permisos insuficientes", "No fue posible seguir observando cambios de red.")
+            } catch (error: Exception) {
+                Log.e(TAG, "observeNetworkChanges failed", error)
             }
         }
 
-        // Airplane mode (HIGH priority)
         jobs += repositoryScope.launch {
-            observeAirplaneMode().collect { enabled ->
-                emitHigh(WifiEvent.AirplaneModeChanged(enabled))
+            try {
+                observeSignalChanges()
+                    .conflate()
+                    .collectLatest { rssi ->
+                        if (_uiState.value.isConnected) {
+                            dispatch(WifiEvent.SignalUpdated(rssi))
+                        }
+                    }
+            } catch (error: SecurityException) {
+                dispatchError("Permisos insuficientes", "No fue posible seguir observando la señal WiFi.")
+            } catch (error: Exception) {
+                Log.e(TAG, "observeSignalChanges failed", error)
             }
+        }
+
+        jobs += repositoryScope.launch {
+            try {
+                observeAirplaneMode()
+                    .distinctUntilChanged()
+                    .collectLatest { enabled ->
+                        dispatch(WifiEvent.AirplaneModeChanged(enabled))
+                        if (enabled) {
+                            dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                            dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+                        } else {
+                            updateConnectionState(forceInternetCheck = true)
+                        }
+                    }
+            } catch (error: Exception) {
+                Log.e(TAG, "observeAirplaneMode failed", error)
+            }
+        }
+
+        jobs += repositoryScope.launch {
+            try {
+                observeLocationState()
+                    .distinctUntilChanged()
+                    .collectLatest { enabled ->
+                        dispatch(WifiEvent.LocationStateChanged(enabled))
+                    }
+            } catch (error: Exception) {
+                Log.e(TAG, "observeLocationState failed", error)
+            }
+        }
+
+        return jobs
+    }
+
+    private fun dispatch(event: WifiEvent) {
+        _uiState.update { currentState ->
+            WifiStateReducer.reduce(currentState, event)
         }
     }
 
-    // ===== SIGNAL OBSERVER (EVENT-DRIVEN, NO POLLING) =====
-    private fun observeSignalChanges() = callbackFlow {
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                val rssi = wifiManager.connectionInfo?.rssi?.takeIf { it != -127 }
-                if (rssi != null) {
-                    trySend(rssi)
-                }
-            }
-        }
-
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .build()
-
-        connectivityManager.registerNetworkCallback(request, callback)
-
-        awaitClose {
-            safeUnregister(callback)
-        }
+    private fun dispatchError(title: String, message: String) {
+        dispatch(
+            WifiEvent.ErrorOccurred(
+                UiError(
+                    title = title,
+                    message = message,
+                    isRecoverable = true
+                )
+            )
+        )
     }
 
-    // ===== NETWORK OBSERVERS =====
-    private fun observeNetworkChanges() = callbackFlow {
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                trySend(Unit)
-            }
-
-            override fun onLost(network: Network) {
-                emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
-            }
-
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                trySend(Unit)
-            }
-        }
-
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .build()
-
-        connectivityManager.registerNetworkCallback(request, callback)
-
-        awaitClose {
-            safeUnregister(callback)
-        }
-    }
-
-    private fun observeAirplaneMode() = callbackFlow {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == Intent.ACTION_AIRPLANE_MODE_CHANGED) {
-                    trySend(SettingsHelper.isAirplaneModeOn(context ?: this@WifiRepositoryImpl.context))
-                }
-            }
-        }
-
-        context.registerReceiver(receiver, IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED))
-        trySend(SettingsHelper.isAirplaneModeOn(context))
-
-        awaitClose {
-            safeUnregister(receiver)
-        }
-    }
-
-    // ===== CONNECTION STATE =====
-    private fun updateConnectionState() {
+    private fun updateConnectionState(forceInternetCheck: Boolean) {
         try {
-            val network = connectivityManager.activeNetwork ?: run {
-                emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+            val connectivityService = connectivityManager ?: run {
+                dispatchError(
+                    title = "Servicio de conectividad no disponible",
+                    message = "No fue posible consultar el estado actual de la red."
+                )
+                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
                 return
             }
-            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: run {
-                emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+            val wifiService = wifiManager ?: run {
+                dispatchError(
+                    title = "Servicio WiFi no disponible",
+                    message = "No fue posible consultar la conexión WiFi actual."
+                )
+                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+                return
+            }
+
+            val activeNetwork = connectivityService.activeNetwork ?: run {
+                currentInternetTarget = null
+                internetCheckJob?.cancel()
+                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
+                return
+            }
+
+            val capabilities = connectivityService.getNetworkCapabilities(activeNetwork) ?: run {
+                currentInternetTarget = null
+                internetCheckJob?.cancel()
+                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
                 return
             }
 
             if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                currentInternetTarget = null
+                internetCheckJob?.cancel()
+                dispatch(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
+                dispatch(WifiEvent.InternetChecked(InternetStatus.UNKNOWN))
                 return
             }
 
-            val connectionInfo = wifiManager.connectionInfo
-            val ssid = connectionInfo?.ssid?.replace("\"", "") ?: run {
-                emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
-                return
-            }
+            val connectionInfo = wifiService.connectionInfo
+            val rawSsid = connectionInfo?.ssid?.replace("\"", "").orEmpty()
+            val displaySsid = rawSsid.takeUnless { it.isBlank() || it == "<unknown ssid>" }
+                ?: "<Red desconocida>"
+            val bssid = connectionInfo?.bssid.orEmpty()
+            val rssi = connectionInfo?.rssi?.takeIf { it != -127 }
+            val linkSpeed = connectionInfo?.linkSpeed?.takeIf { it > 0 }
 
-            if (ssid == "<unknown ssid>" || ssid.isBlank()) {
-                emitHigh(WifiEvent.ConnectionChanged(null, null, null, null, null, false))
-                return
-            }
-
-            val linkProperties = connectivityManager.getLinkProperties(network)
+            val linkProperties = connectivityService.getLinkProperties(activeNetwork)
             val ipAddress = linkProperties?.linkAddresses
                 ?.firstOrNull { it.address is java.net.Inet4Address }
-                ?.address?.hostAddress
+                ?.address
+                ?.hostAddress
 
-            val rssi = connectionInfo.rssi.takeIf { it != -127 }
-            val hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            val hasInternetCapability =
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 
-            emitHigh(WifiEvent.ConnectionChanged(
-                ssid, connectionInfo.bssid, ipAddress,
-                connectionInfo.linkSpeed, rssi, hasInternet
-            ))
+            dispatch(
+                WifiEvent.ConnectionChanged(
+                    ssid = displaySsid,
+                    bssid = bssid,
+                    ipAddress = ipAddress,
+                    linkSpeed = linkSpeed,
+                    rssi = rssi,
+                    hasInternetCapability = hasInternetCapability
+                )
+            )
 
-            // Async internet check (LOW priority, debounceado)
-            if (hasInternet) {
-                checkInternetAsync()
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating connection", e)
-        }
-    }
-
-    // ===== INTERNET CHECK (ASYNC, DEBOUNCEADO) =====
-    private fun checkInternetAsync() {
-        emitLow(WifiEvent.InternetCheckStarted)
-
-        repositoryScope.launch {
-            try {
-                val hasInternet = withTimeout(5000) {
-                    internetChecker.hasRealInternet()
+            when {
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) -> {
+                    currentInternetTarget = bssid.ifBlank { displaySsid }
+                    internetCheckJob?.cancel()
+                    dispatch(WifiEvent.InternetChecked(InternetStatus.AVAILABLE))
                 }
-                emitLow(WifiEvent.InternetChecked(
-                    if (hasInternet) InternetStatus.AVAILABLE else InternetStatus.UNAVAILABLE
-                ))
-            } catch (e: Exception) {
-                emitLow(WifiEvent.InternetChecked(InternetStatus.UNAVAILABLE))
+
+                !hasInternetCapability -> {
+                    currentInternetTarget = bssid.ifBlank { displaySsid }
+                    internetCheckJob?.cancel()
+                    dispatch(WifiEvent.InternetChecked(InternetStatus.UNAVAILABLE))
+                }
+
+                else -> startInternetCheck(
+                    target = bssid.ifBlank { displaySsid },
+                    forceInternetCheck = forceInternetCheck
+                )
             }
+        } catch (error: SecurityException) {
+            Log.e(TAG, "updateConnectionState security error", error)
+            dispatchError(
+                title = "Permisos insuficientes",
+                message = "No fue posible leer el estado actual del WiFi."
+            )
+        } catch (error: Exception) {
+            Log.e(TAG, "updateConnectionState error", error)
+            dispatchError(
+                title = "Error de conexión",
+                message = "No fue posible re-evaluar la conexión actual."
+            )
         }
     }
 
-    // ===== SCAN 100% SEGURO =====
-    override suspend fun scanNetworks() {
-        if (isScanningAtomic.getAndSet(true)) {
-            Log.d(TAG, "Scan already in progress")
+    private fun startInternetCheck(target: String, forceInternetCheck: Boolean) {
+        if (!forceInternetCheck && currentInternetTarget == target &&
+            _uiState.value.internetStatus == InternetStatus.CHECKING
+        ) {
             return
         }
 
-        val elapsed = SystemClock.elapsedRealtime() - lastScanElapsedTime
-        if (elapsed < SCAN_THROTTLE_MS && !_state.value.isDemoMode) {
-            val remaining = ((SCAN_THROTTLE_MS - elapsed) / 1000).toInt()
-            startThrottleCountdown(remaining)
-            isScanningAtomic.set(false)
-            return
-        }
+        currentInternetTarget = target
+        internetCheckJob?.cancel()
+        dispatch(WifiEvent.InternetCheckStarted)
 
-        if (!hasRequiredPermissions()) {
-            emitHigh(WifiEvent.ErrorOccurred(com.example.wifiinsight.data.model.UiError(
-                title = "Permisos requeridos",
-                message = "Se necesitan permisos para escanear redes",
-                isRecoverable = true
-            )))
-            isScanningAtomic.set(false)
-            return
-        }
+        internetCheckJob = repositoryScope.launch {
+            val hasInternet = try {
+                withTimeout(INTERNET_TIMEOUT_MS) {
+                    if (forceInternetCheck) {
+                        internetChecker.forceCheck()
+                    } else {
+                        internetChecker.hasRealInternet()
+                    }
+                }
+            } catch (error: Exception) {
+                false
+            }
 
-        if (_state.value.isDemoMode) {
-            performDemoScan()
-            return
-        }
-
-        emitHigh(WifiEvent.ScanStarted)
-
-        try {
-            val results = performRealScanSecure()
-            emitHigh(WifiEvent.ScanCompleted(results))
-            lastScanElapsedTime = SystemClock.elapsedRealtime()
-        } catch (e: Exception) {
-            Log.e(TAG, "Scan failed", e)
-            emitHigh(WifiEvent.ScanFailed(e.message ?: "Error desconocido"))
-        } finally {
-            isScanningAtomic.set(false)
+            val activeTarget = _uiState.value.bssid.orEmpty().ifBlank {
+                _uiState.value.ssid.orEmpty()
+            }
+            if (activeTarget == target) {
+                dispatch(
+                    WifiEvent.InternetChecked(
+                        if (hasInternet) InternetStatus.AVAILABLE else InternetStatus.UNAVAILABLE
+                    )
+                )
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun performRealScanSecure(): List<WifiNetwork> =
-        suspendCancellableCoroutine { cont ->
+    private suspend fun performRealScan(): List<WifiNetwork> {
+        return suspendCancellableCoroutine { continuation ->
+            val wifiService = wifiManager
+            if (wifiService == null) {
+                continuation.resumeWithException(
+                    IllegalStateException("El servicio WiFi no está disponible en este momento.")
+                )
+                return@suspendCancellableCoroutine
+            }
+
             var receiver: BroadcastReceiver? = null
             var timeoutJob: Job? = null
 
@@ -423,27 +637,26 @@ class WifiRepositoryImpl(
             try {
                 receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) return
-
-                        timeoutJob?.cancel()
-
-                        val results = try {
-                            wifiManager.scanResults
-                                ?.filter { !it.SSID.isNullOrBlank() }
-                                ?.map { WifiNetwork.fromScanResult(it) }
-                                ?.distinctBy { it.ssid }
-                                ?.sortedByDescending { it.rssi }
-                                ?: emptyList()
-                        } catch (e: Exception) {
-                            emptyList()
+                        if (intent?.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                            return
                         }
 
+                        val results = wifiService.scanResults
+                            .orEmpty()
+                            .map { WifiNetwork.fromScanResult(it) }
+                            .distinctBy { network ->
+                                network.bssid.ifBlank { "${network.ssid}-${network.frequency}" }
+                            }
+                            .let(::sortScanResults)
+
                         cleanup()
-                        if (cont.isActive) cont.resume(results)
+                        if (continuation.isActive) {
+                            continuation.resume(results)
+                        }
                     }
                 }
 
-                context.registerReceiver(
+                registerReceiverCompat(
                     receiver,
                     IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
                 )
@@ -451,133 +664,205 @@ class WifiRepositoryImpl(
                 timeoutJob = repositoryScope.launch {
                     delay(SCAN_TIMEOUT_MS)
                     cleanup()
-                    if (cont.isActive) cont.resume(emptyList())
+                    if (continuation.isActive) {
+                        continuation.resume(emptyList())
+                    }
                 }
 
-                val success = wifiManager.startScan()
-
-                if (!success) {
+                val scanStarted = wifiService.startScan()
+                if (!scanStarted) {
                     cleanup()
-                    cont.resumeWithException(
-                        IllegalStateException("Escaneo limitado por Android")
+                    continuation.resumeWithException(
+                        IllegalStateException(
+                            "Android limitó el escaneo. Espera unos segundos antes de intentar otra vez."
+                        )
                     )
                 }
-
-            } catch (e: Exception) {
+            } catch (error: SecurityException) {
                 cleanup()
-                cont.resumeWithException(e)
+                continuation.resumeWithException(
+                    SecurityException("Permisos requeridos para escanear redes WiFi.")
+                )
+            } catch (error: Exception) {
+                cleanup()
+                continuation.resumeWithException(error)
             }
 
-            cont.invokeOnCancellation {
+            continuation.invokeOnCancellation {
                 cleanup()
             }
         }
+    }
 
-    private suspend fun performDemoScan() {
-        emitHigh(WifiEvent.ScanStarted)
-        delay(1500)
-        emitHigh(WifiEvent.ScanCompleted(DemoModeManager.generateDemoNetworks()))
-        lastScanElapsedTime = SystemClock.elapsedRealtime()
-        isScanningAtomic.set(false)
+    private fun sortScanResults(results: List<WifiNetwork>): List<WifiNetwork> {
+        val previousOrder = _uiState.value.scanResults
+            .mapIndexed { index, network ->
+                network.bssid.ifBlank { "${network.ssid}-${network.frequency}" } to index
+            }
+            .toMap()
+
+        return if (previousOrder.isEmpty()) {
+            results.sortedByDescending { it.rssi }
+        } else {
+            results.sortedWith(
+                compareBy<WifiNetwork> {
+                    previousOrder[it.bssid.ifBlank { "${it.ssid}-${it.frequency}" }] ?: Int.MAX_VALUE
+                }.thenByDescending { it.rssi }
+            )
+        }
     }
 
     private fun startThrottleCountdown(seconds: Int) {
         throttleJob?.cancel()
-
         throttleJob = repositoryScope.launch {
             var remaining = seconds
             while (remaining > 0) {
-                emitLow(WifiEvent.ThrottleUpdated(remaining))
-                delay(1000)
+                dispatch(WifiEvent.ThrottleUpdated(remaining))
+                delay(1_000L)
                 remaining--
             }
-            emitLow(WifiEvent.ThrottleUpdated(0))
+            dispatch(WifiEvent.ThrottleUpdated(0))
         }
     }
 
-    // ===== PUBLIC API =====
-    override suspend fun retry() {
-        emitHigh(WifiEvent.ErrorCleared)
-        internetChecker.invalidateCache()
-        scanNetworks()
-    }
-
-    override fun updatePermissionState(granted: Boolean, shouldShowRationale: Boolean) {
-        val newState = when {
-            granted -> PermissionState.Granted
-            shouldShowRationale -> PermissionState.Denied(shouldShowRationale = true)
-            else -> PermissionState.Denied(shouldShowRationale = false)
-        }
-        emitHigh(WifiEvent.PermissionUpdated(newState))
-    }
-
-    override fun openWifiSettings(): Boolean {
-        return SystemSettingsHelper.openWifiSettings(context)
-    }
-
-    override fun setDemoMode(enabled: Boolean) {
-        emitHigh(WifiEvent.DemoModeToggled(enabled))
-        demoModeManager.setDemoMode(enabled, repositoryScope)
-        if (enabled) {
-            repositoryScope.launch {
-                emitHigh(WifiEvent.ScanCompleted(DemoModeManager.generateDemoNetworks()))
-            }
-        }
-    }
-
-    override fun cleanup() {
-        Log.d(TAG, "Cleanup...")
-        jobs.forEach { it.cancel() }
-        jobs.clear()
+    private fun stopThrottleCountdown() {
         throttleJob?.cancel()
-        repositoryScope.cancel()
-        demoModeManager.cleanup()
+        throttleJob = null
+        dispatch(WifiEvent.ThrottleUpdated(0))
     }
 
-    // ===== HELPERS =====
-    private fun hasRequiredPermissions(): Boolean {
-        return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.NEARBY_WIFI_DEVICES
-                ) == PackageManager.PERMISSION_GRANTED
+    private fun observeSignalChanges() = callbackFlow {
+        val connectivityService = connectivityManager
+        val wifiService = wifiManager
+        if (connectivityService == null || wifiService == null) {
+            close()
+            return@callbackFlow
+        }
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                val rssi = wifiService.connectionInfo?.rssi?.takeIf { it != -127 }
+                if (rssi != null) {
+                    trySend(rssi)
+                }
             }
-            else -> {
-                ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.ACCESS_FINE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
+        }
+
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+
+        try {
+            connectivityService.registerNetworkCallback(request, callback)
+        } catch (error: SecurityException) {
+            close(error)
+            return@callbackFlow
+        } catch (error: Exception) {
+            close(error)
+            return@callbackFlow
+        }
+
+        awaitClose {
+            safeUnregister(callback)
+        }
+    }
+
+    private fun observeNetworkChanges() = callbackFlow {
+        val connectivityService = connectivityManager
+        if (connectivityService == null) {
+            close()
+            return@callbackFlow
+        }
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trySend(Unit)
             }
+
+            override fun onLost(network: Network) {
+                trySend(Unit)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                trySend(Unit)
+            }
+        }
+
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+
+        try {
+            connectivityService.registerNetworkCallback(request, callback)
+        } catch (error: SecurityException) {
+            close(error)
+            return@callbackFlow
+        } catch (error: Exception) {
+            close(error)
+            return@callbackFlow
+        }
+
+        awaitClose {
+            safeUnregister(callback)
+        }
+    }
+
+    private fun observeAirplaneMode() = callbackFlow {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_AIRPLANE_MODE_CHANGED) {
+                    trySend(SettingsHelper.isAirplaneModeOn(appContext))
+                }
+            }
+        }
+
+        registerReceiverCompat(receiver, IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED))
+        trySend(SettingsHelper.isAirplaneModeOn(appContext))
+
+        awaitClose {
+            safeUnregister(receiver)
+        }
+    }
+
+    private fun observeLocationState() = callbackFlow {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                trySend(SettingsHelper.isLocationEnabled(appContext))
+            }
+        }
+
+        val filter = IntentFilter().apply {
+            addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
+            addAction(LocationManager.MODE_CHANGED_ACTION)
+        }
+        registerReceiverCompat(receiver, filter)
+        trySend(SettingsHelper.isLocationEnabled(appContext))
+
+        awaitClose {
+            safeUnregister(receiver)
+        }
+    }
+
+    private fun registerReceiverCompat(receiver: BroadcastReceiver, filter: IntentFilter) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            appContext.registerReceiver(receiver, filter)
         }
     }
 
     private fun safeUnregister(receiver: BroadcastReceiver) {
-        try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+        try {
+            appContext.unregisterReceiver(receiver)
+        } catch (_: Exception) {
+        }
     }
 
     private fun safeUnregister(callback: ConnectivityManager.NetworkCallback) {
-        try { connectivityManager.unregisterNetworkCallback(callback) } catch (_: Exception) {}
+        try {
+            connectivityManager?.unregisterNetworkCallback(callback)
+        } catch (_: Exception) {
+        }
     }
 
-    private fun emitInitialState() {
-        emitHigh(WifiEvent.WifiToggled(wifiManager.isWifiEnabled))
-        emitHigh(WifiEvent.AirplaneModeChanged(SettingsHelper.isAirplaneModeOn(context)))
-    }
-
-    private fun logStateChange(event: WifiEvent, state: WifiState, version: Long) {
-        if (event is WifiEvent.SignalUpdated) return
-        Log.d(TAG, "[v$version] ${event.javaClass.simpleName} -> ${state.copy(signalHistory = emptyList())}")
-    }
-
-    // ===== LEGACY =====
-    override fun getScanHistory(): List<WifiNetwork> = _state.value.scanResults
-    
-    override fun connectToNetwork(network: WifiNetwork, password: String?): kotlinx.coroutines.flow.Flow<Result<Boolean>> {
-        // TODO: Implement actual connection logic
-        return kotlinx.coroutines.flow.flowOf(Result.success(false))
-    }
-    
-    override fun observeConnectionState() = uiState
-    override fun observeScanState() = uiState
-    override fun observeSystemState() = uiState
-    override fun observeErrorState() = uiState
 }

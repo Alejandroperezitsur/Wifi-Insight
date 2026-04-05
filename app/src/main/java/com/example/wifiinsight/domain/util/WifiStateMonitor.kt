@@ -29,8 +29,14 @@ class WifiStateMonitor(private val context: Context) {
      * Emite inmediatamente cuando cambia el estado.
      */
     val wifiStateFlow: Flow<WifiState> = callbackFlow {
-        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+
+        if (wifiManager == null || connectivityManager == null) {
+            trySend(WifiState.Error("Servicios del sistema no disponibles"))
+            close()
+            return@callbackFlow
+        }
 
         // Estado inicial
         trySend(getCurrentWifiState(wifiManager, connectivityManager))
@@ -58,7 +64,7 @@ class WifiStateMonitor(private val context: Context) {
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
                 context.registerReceiver(receiver, filter)
             }

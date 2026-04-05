@@ -18,14 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NetworkWifi
 import androidx.compose.material.icons.filled.SignalCellularAlt
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -37,69 +34,42 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.SavedStateHandle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavBackStackEntry
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wifiinsight.data.model.WifiNetwork
-import com.example.wifiinsight.data.repository.WifiRepositoryImpl
-import com.example.wifiinsight.domain.usecase.ConnectToNetworkUseCase
 import com.example.wifiinsight.domain.util.SignalCalculator
+import com.example.wifiinsight.presentation.common.components.FeedbackTone
 import com.example.wifiinsight.presentation.common.components.LoadingState
 import com.example.wifiinsight.presentation.common.components.SecurityBadge
 import com.example.wifiinsight.presentation.common.components.SignalIndicator
+import com.example.wifiinsight.presentation.common.components.StateFeedbackCard
 import com.example.wifiinsight.presentation.common.components.getSignalColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NetworkDetailScreen(
-    networkId: String,
-    savedStateHandle: SavedStateHandle,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: NetworkDetailViewModel = hiltViewModel()
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val repository = remember { WifiRepositoryImpl(context, com.example.wifiinsight.domain.util.InternetChecker()) }
-    val connectUseCase = remember { ConnectToNetworkUseCase(repository) }
-    // FIX CRÍTICO #5: Pasar SavedStateHandle real al ViewModel
-    val viewModel: NetworkDetailViewModel = viewModel(
-        factory = NetworkDetailViewModel.provideFactory(repository, connectUseCase, savedStateHandle)
-    )
-
-    val uiState by viewModel.uiState.collectAsState()
-    val password by viewModel.password.collectAsState()
-    val snackbarHostState = remember { SnackbarHostState() }
-
-    LaunchedEffect(uiState) {
-        if (uiState is DetailUiState.ConnectionResult) {
-            val result = uiState as DetailUiState.ConnectionResult
-            snackbarHostState.showSnackbar(result.message)
-        }
-    }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text("Detalles de Red") },
+                title = { Text("Detalle de red") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
@@ -112,35 +82,33 @@ fun NetworkDetailScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        }
     ) { paddingValues ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            when (val state = uiState) {
-                is DetailUiState.Loading -> {
+            when {
+                uiState.isLoading -> {
                     LoadingState()
                 }
-                is DetailUiState.Error -> {
+
+                uiState.network == null -> {
                     ErrorContent(
-                        message = state.message,
-                        onRetry = onNavigateBack
+                        message = uiState.errorMessage ?: "No se pudo cargar la red.",
+                        onBack = onNavigateBack
                     )
                 }
-                is DetailUiState.Success -> {
+
+                else -> {
                     NetworkDetailContent(
-                        network = state.network,
-                        isConnecting = state.isConnecting,
-                        password = password,
+                        state = uiState,
                         onPasswordChange = viewModel::updatePassword,
                         onConnect = viewModel::connectToNetwork,
+                        onDismissResult = viewModel::dismissConnectionResult,
                         onNavigateBack = onNavigateBack
                     )
-                }
-                is DetailUiState.ConnectionResult -> {
                 }
             }
         }
@@ -149,14 +117,13 @@ fun NetworkDetailScreen(
 
 @Composable
 private fun NetworkDetailContent(
-    network: WifiNetwork,
-    isConnecting: Boolean,
-    password: String,
+    state: NetworkDetailUiState,
     onPasswordChange: (String) -> Unit,
     onConnect: () -> Unit,
+    onDismissResult: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
-    val scrollState = rememberScrollState()
+    val network = state.network ?: return
     val percentage = SignalCalculator.rssiToPercentage(network.rssi)
     val signalLevel = SignalCalculator.rssiToSignalLevel(network.rssi)
     val signalColor = getSignalColor(signalLevel)
@@ -166,9 +133,43 @@ private fun NetworkDetailContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(scrollState)
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
+        when (val result = state.connectionResult) {
+            ConnectionResultState.Idle -> Unit
+            ConnectionResultState.Loading -> {
+                StateFeedbackCard(
+                    title = "Conectando",
+                    message = "Procesando solicitud de conexión.",
+                    tone = FeedbackTone.Info
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            is ConnectionResultState.Success -> {
+                StateFeedbackCard(
+                    title = "Conexión iniciada",
+                    message = result.message,
+                    tone = FeedbackTone.Success,
+                    actionLabel = "Cerrar",
+                    onAction = onDismissResult
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            is ConnectionResultState.Error -> {
+                StateFeedbackCard(
+                    title = "No se pudo conectar",
+                    message = result.message,
+                    tone = FeedbackTone.Error,
+                    actionLabel = "Cerrar",
+                    onAction = onDismissResult
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -198,7 +199,7 @@ private fun NetworkDetailContent(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = network.ssid,
+                    text = network.safeSsid,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -228,7 +229,7 @@ private fun NetworkDetailContent(
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Información Técnica",
+            text = "Información de red",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold
         )
@@ -238,14 +239,14 @@ private fun NetworkDetailContent(
         DetailInfoCard(
             icon = Icons.Default.Wifi,
             label = "BSSID",
-            value = network.bssid
+            value = network.safeBssid
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
         DetailInfoCard(
             icon = Icons.Default.SignalCellularAlt,
-            label = "Intensidad de Señal",
+            label = "Intensidad",
             value = "${network.rssi} dBm"
         )
 
@@ -285,7 +286,7 @@ private fun NetworkDetailContent(
 
         if (network.securityType.isSecure()) {
             OutlinedTextField(
-                value = password,
+                value = state.password,
                 onValueChange = onPasswordChange,
                 label = { Text("Contraseña") },
                 singleLine = true,
@@ -297,9 +298,10 @@ private fun NetworkDetailContent(
         Button(
             onClick = onConnect,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isConnecting && (password.isNotEmpty() || !network.securityType.isSecure())
+            enabled = state.connectionResult != ConnectionResultState.Loading &&
+                (state.password.isNotBlank() || !network.securityType.isSecure())
         ) {
-            if (isConnecting) {
+            if (state.connectionResult == ConnectionResultState.Loading) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
                     color = MaterialTheme.colorScheme.onPrimary,
@@ -307,12 +309,12 @@ private fun NetworkDetailContent(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }
-            Text("Conectar a esta red")
+            Text("Intentar conexión")
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        TextButton(
+        Button(
             onClick = onNavigateBack,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -323,7 +325,7 @@ private fun NetworkDetailContent(
 
 @Composable
 private fun DetailInfoCard(
-    icon: ImageVector,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     value: String
 ) {
@@ -342,8 +344,7 @@ private fun DetailInfoCard(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
+                tint = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.width(16.dp))
             Column {
@@ -365,7 +366,7 @@ private fun DetailInfoCard(
 @Composable
 private fun ErrorContent(
     message: String,
-    onRetry: () -> Unit
+    onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -382,7 +383,7 @@ private fun ErrorContent(
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "Error",
+            text = "Detalle no disponible",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.error
         )
@@ -393,13 +394,8 @@ private fun ErrorContent(
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onRetry) {
+        Button(onClick = onBack) {
             Text("Volver")
         }
     }
-}
-
-@Composable
-private fun <T> remember(calculation: () -> T): T {
-    return androidx.compose.runtime.remember { calculation() }
 }
