@@ -5,6 +5,8 @@ import android.os.SystemClock
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.wifiinsight.data.model.ConnectionQuality
+import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.repository.WifiRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -33,7 +35,10 @@ data class NetworkDetailUiState(
     val connectionResult: ConnectionResultState = ConnectionResultState.Idle,
     val errorMessage: String? = null,
     val isStale: Boolean = false,
-    val lastScanTimestamp: Long = 0L
+    val lastScanTimestamp: Long = 0L,
+    val isCurrentConnection: Boolean = false,
+    val connectionQuality: ConnectionQuality = ConnectionQuality.DISCONNECTED,
+    val internetStatus: InternetStatus = InternetStatus.UNKNOWN
 )
 
 private data class DetailLocalState(
@@ -80,6 +85,7 @@ class NetworkDetailViewModel @Inject constructor(
         }
         val isStale = resolvedNetwork != null &&
             (liveNetwork == null || scanAge > NETWORK_STALE_TIMEOUT)
+        val isCurrentConnection = resolvedNetwork?.bssid == repositoryState.bssid && repositoryState.isConnected
         NetworkDetailUiState(
             isLoading = false,
             network = resolvedNetwork,
@@ -87,6 +93,17 @@ class NetworkDetailViewModel @Inject constructor(
             connectionResult = local.connectionResult,
             isStale = isStale,
             lastScanTimestamp = repositoryState.lastScanTimestamp,
+            isCurrentConnection = isCurrentConnection,
+            connectionQuality = if (isCurrentConnection) {
+                repositoryState.connectionQuality
+            } else {
+                ConnectionQuality.DISCONNECTED
+            },
+            internetStatus = if (isCurrentConnection) {
+                repositoryState.internetStatus
+            } else {
+                InternetStatus.UNKNOWN
+            },
             errorMessage = if (resolvedNetwork == null) {
                 "Red no disponible. Escanea de nuevo para cargar sus detalles."
             } else {

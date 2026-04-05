@@ -1,5 +1,6 @@
 package com.example.wifiinsight.presentation.screens.detail
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,10 +36,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +52,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.wifiinsight.data.model.ConnectionQuality
+import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.domain.util.SignalCalculator
 import com.example.wifiinsight.presentation.common.components.FeedbackTone
@@ -122,19 +129,21 @@ private fun NetworkDetailContent(
     onConnect: () -> Unit,
     onDismissResult: () -> Unit,
     onNavigateBack: () -> Unit
-    ) {
+) {
     val network = state.network ?: return
     val percentage = SignalCalculator.rssiToPercentage(network.rssi)
     val signalLevel = SignalCalculator.rssiToSignalLevel(network.rssi)
     val signalColor = getSignalColor(signalLevel)
     val bandName = SignalCalculator.getBandName(network.frequency)
     val channel = SignalCalculator.frequencyToChannel(network.frequency)
+    var showAdvanced by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
+            .animateContentSize()
     ) {
         if (state.isStale) {
             StateFeedbackCard(
@@ -143,40 +152,6 @@ private fun NetworkDetailContent(
                 tone = FeedbackTone.Warning
             )
             Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        when (val result = state.connectionResult) {
-            ConnectionResultState.Idle -> Unit
-            ConnectionResultState.Loading -> {
-                StateFeedbackCard(
-                    title = "Conectando",
-                    message = "Procesando solicitud de conexión.",
-                    tone = FeedbackTone.Info
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            is ConnectionResultState.Success -> {
-                StateFeedbackCard(
-                    title = "Conexión iniciada",
-                    message = result.message,
-                    tone = FeedbackTone.Success,
-                    actionLabel = "Cerrar",
-                    onAction = onDismissResult
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            is ConnectionResultState.Error -> {
-                StateFeedbackCard(
-                    title = "No se pudo conectar",
-                    message = result.message,
-                    tone = FeedbackTone.Error,
-                    actionLabel = "Cerrar",
-                    onAction = onDismissResult
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
         }
 
         Card(
@@ -232,96 +207,208 @@ private fun NetworkDetailContent(
                     style = MaterialTheme.typography.bodyLarge,
                     color = signalColor
                 )
-            }
-        }
 
-        Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-        Text(
-            text = "Información de red",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        DetailInfoCard(
-            icon = Icons.Default.Wifi,
-            label = "BSSID",
-            value = network.safeBssid
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        DetailInfoCard(
-            icon = Icons.Default.SignalCellularAlt,
-            label = "Intensidad",
-            value = "${network.rssi} dBm"
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        DetailInfoCard(
-            icon = Icons.Default.NetworkWifi,
-            label = "Frecuencia",
-            value = "${network.frequency} MHz ($bandName)"
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        DetailInfoCard(
-            icon = Icons.Default.Link,
-            label = "Canal",
-            value = channel.toString()
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        DetailInfoCard(
-            icon = Icons.Default.Lock,
-            label = "Seguridad",
-            value = network.securityType.displayName()
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = "Conectar",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (network.securityType.isSecure()) {
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = onPasswordChange,
-                label = { Text("Contraseña") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        Button(
-            onClick = onConnect,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = state.connectionResult != ConnectionResultState.Loading &&
-                (state.password.isNotBlank() || !network.securityType.isSecure())
-        ) {
-            if (state.connectionResult == ConnectionResultState.Loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp
+                Text(
+                    text = signalQualityLabel(network.rssi),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.width(8.dp))
             }
-            Text("Intentar conexión")
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Estado actual",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                DetailInfoRow(
+                    label = "Conexión",
+                    value = connectionQualityLabel(state)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                DetailInfoRow(
+                    label = "Señal",
+                    value = signalQualityLabel(network.rssi)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                DetailInfoRow(
+                    label = "Internet",
+                    value = internetStatusLabel(state)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        when (val result = state.connectionResult) {
+            ConnectionResultState.Idle -> Unit
+            ConnectionResultState.Loading -> {
+                StateFeedbackCard(
+                    title = "Conectando",
+                    message = "Procesando solicitud de conexión.",
+                    tone = FeedbackTone.Info
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            is ConnectionResultState.Success -> {
+                StateFeedbackCard(
+                    title = "Conexión iniciada",
+                    message = result.message,
+                    tone = FeedbackTone.Success,
+                    actionLabel = "Cerrar",
+                    onAction = onDismissResult
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            is ConnectionResultState.Error -> {
+                StateFeedbackCard(
+                    title = "No se pudo conectar",
+                    message = result.message,
+                    tone = FeedbackTone.Error,
+                    actionLabel = "Cerrar",
+                    onAction = onDismissResult
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Conectar",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Intenta conectarte y te diremos claramente si Android lo bloquea o si la red no responde.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (network.securityType.isSecure()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = state.password,
+                        onValueChange = onPasswordChange,
+                        label = { Text("Contraseña") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = onConnect,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = state.connectionResult != ConnectionResultState.Loading &&
+                        (state.password.isNotBlank() || !network.securityType.isSecure())
+                ) {
+                    if (state.connectionResult == ConnectionResultState.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text("Intentar conexión")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        TextButton(
+            onClick = { showAdvanced = !showAdvanced },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (showAdvanced) "Ocultar detalles técnicos" else "Ver detalles técnicos")
+        }
+
+        if (showAdvanced) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Detalles técnicos",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            DetailInfoCard(
+                icon = Icons.Default.Wifi,
+                label = "BSSID",
+                value = network.safeBssid
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DetailInfoCard(
+                icon = Icons.Default.SignalCellularAlt,
+                label = "Intensidad",
+                value = "${network.rssi} dBm"
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DetailInfoCard(
+                icon = Icons.Default.NetworkWifi,
+                label = "Frecuencia",
+                value = "${network.frequency} MHz ($bandName)"
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DetailInfoCard(
+                icon = Icons.Default.Link,
+                label = "Canal",
+                value = channel.toString()
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DetailInfoCard(
+                icon = Icons.Default.Lock,
+                label = "Seguridad",
+                value = network.securityType.displayName()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(
             onClick = onNavigateBack,
@@ -329,6 +416,63 @@ private fun NetworkDetailContent(
         ) {
             Text("Volver")
         }
+    }
+}
+
+@Composable
+private fun DetailInfoRow(
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+private fun signalQualityLabel(rssi: Int): String {
+    return when {
+        rssi >= -50 -> "Excelente (estable para videollamadas)"
+        rssi >= -60 -> "Buena (estable para navegación)"
+        rssi >= -70 -> "Regular (puede variar)"
+        else -> "Mala (puede fallar la conexión)"
+    }
+}
+
+private fun connectionQualityLabel(state: NetworkDetailUiState): String {
+    if (!state.isCurrentConnection) {
+        return "No conectada actualmente"
+    }
+    return when (state.connectionQuality) {
+        ConnectionQuality.CONNECTING -> "Conectando..."
+        ConnectionQuality.CONNECTED_NO_INTERNET -> "Conectado sin internet"
+        ConnectionQuality.CONNECTED_INTERNET -> "Conectado con internet"
+        ConnectionQuality.DISCONNECTED -> "Sin conexión"
+    }
+}
+
+private fun internetStatusLabel(state: NetworkDetailUiState): String {
+    if (!state.isCurrentConnection) {
+        return "Solo visible si te conectas a esta red"
+    }
+    return when (state.internetStatus) {
+        InternetStatus.AVAILABLE -> "Internet funcionando"
+        InternetStatus.UNAVAILABLE -> "Conectado, pero esta red no tiene acceso a internet"
+        InternetStatus.CHECKING, InternetStatus.UNKNOWN -> "Verificando conexión..."
     }
 }
 

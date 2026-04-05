@@ -18,6 +18,8 @@ interface WifiRepository {
 
     fun refreshPermissions(activity: Activity? = null)
 
+    fun softReset()
+
     fun markPermissionRequested()
 
     fun clearError()

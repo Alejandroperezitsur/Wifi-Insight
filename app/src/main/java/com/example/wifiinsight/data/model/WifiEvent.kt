@@ -5,6 +5,9 @@ package com.example.wifiinsight.data.model
  * Event-driven architecture: TODOS los cambios pasan por eventos
  */
 sealed class WifiEvent {
+    data class ActionStarted(val action: UserAction, val token: Long) : WifiEvent()
+    data class ActionFinished(val action: UserAction, val token: Long) : WifiEvent()
+    data class ActionTimeout(val action: UserAction, val token: Long) : WifiEvent()
     data class WifiToggled(val enabled: Boolean) : WifiEvent()
     data class AirplaneModeChanged(val enabled: Boolean) : WifiEvent()
     data class ConnectionChanged(
@@ -30,6 +33,7 @@ sealed class WifiEvent {
     data class PermissionUpdated(val state: PermissionState) : WifiEvent()
     data class LocationStateChanged(val enabled: Boolean) : WifiEvent()
     data class ThrottleUpdated(val remainingMs: Long) : WifiEvent()
+    data class SystemDegraded(val degradation: SystemDegradation) : WifiEvent()
     data class ErrorOccurred(val error: UiError) : WifiEvent()
     data object ErrorCleared : WifiEvent()
 }

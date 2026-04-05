@@ -1,6 +1,7 @@
 package com.example.wifiinsight.presentation.screens.home
 
 import android.app.Activity
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -43,10 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -55,6 +59,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.wifiinsight.data.model.ConnectionState
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
+import com.example.wifiinsight.data.model.SystemDegradation
 import com.example.wifiinsight.data.model.WifiState
 import com.example.wifiinsight.domain.util.SignalCalculator
 import com.example.wifiinsight.presentation.common.components.FeedbackTone
@@ -66,6 +71,7 @@ import com.example.wifiinsight.presentation.viewmodel.UnifiedWifiViewModel
 @Composable
 fun HomeScreen(
     onNavigateToScan: () -> Unit,
+    onOpenDebug: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     viewModel: UnifiedWifiViewModel = hiltViewModel()
 ) {
@@ -84,8 +90,18 @@ fun HomeScreen(
                 rssi = uiState.signalStrength,
                 hasInternet = uiState.internetStatus == InternetStatus.AVAILABLE,
                 isValidated = uiState.internetStatus == InternetStatus.AVAILABLE,
-                internetStatus = uiState.internetStatus
+                internetStatus = uiState.internetStatus,
+                connectionQuality = uiState.connectionQuality
             )
+        }
+    }
+    val contentState by remember(uiState.wifiEnabled, uiState.isConnected) {
+        derivedStateOf {
+            when {
+                !uiState.wifiEnabled -> HomeContentState.WifiDisabled
+                uiState.isConnected -> HomeContentState.Connected
+                else -> HomeContentState.Disconnected
+            }
         }
     }
 
@@ -120,7 +136,14 @@ fun HomeScreen(
                     Text(
                         text = "WiFi Insight",
                         style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.pointerInput(onOpenDebug) {
+                            detectTapGestures(
+                                onLongPress = {
+                                    onOpenDebug?.invoke()
+                                }
+                            )
+                        }
                     )
                 },
                 scrollBehavior = scrollBehavior
@@ -149,38 +172,50 @@ fun HomeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
+            if (uiState.isProcessing) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             HomeStateAlerts(
                 state = uiState,
                 onOpenAppSettings = viewModel::openAppSettings,
                 onOpenLocationSettings = viewModel::openLocationSettings
             )
 
-            when {
-                !uiState.wifiEnabled -> {
-                    WifiDisabledState(
-                        onEnableWifi = viewModel::openWifiSettings,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+            Crossfade(
+                targetState = contentState,
+                label = "home-content"
+            ) { screenState ->
+                when (screenState) {
+                    HomeContentState.WifiDisabled -> {
+                        WifiDisabledState(
+                            onEnableWifi = viewModel::openWifiSettings,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
 
-                uiState.isConnected -> {
-                    ConnectedContent(
-                        connection = connectionState,
-                        signalHistory = uiState.signalHistory,
-                        isRefreshingConnection = uiState.isRefreshingConnection,
-                        onNavigateToScan = onNavigateToScan,
-                        onReEvaluate = viewModel::reEvaluateConnection,
-                        onOpenWifiSettings = viewModel::openWifiSettings
-                    )
-                }
+                    HomeContentState.Connected -> {
+                        ConnectedContent(
+                            connection = connectionState,
+                            signalHistory = uiState.signalHistory,
+                            isRefreshingConnection = uiState.isRefreshingConnection,
+                            onNavigateToScan = onNavigateToScan,
+                            onReEvaluate = viewModel::reEvaluateConnection,
+                            onOpenWifiSettings = viewModel::openWifiSettings
+                        )
+                    }
 
-                else -> {
-                    DisconnectedContent(
-                        isRefreshingConnection = uiState.isRefreshingConnection,
-                        onReEvaluate = viewModel::reEvaluateConnection,
-                        onOpenSettings = viewModel::openWifiSettings,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    HomeContentState.Disconnected -> {
+                        DisconnectedContent(
+                            isRefreshingConnection = uiState.isRefreshingConnection,
+                            onReEvaluate = viewModel::reEvaluateConnection,
+                            onOpenSettings = viewModel::openWifiSettings,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
@@ -240,8 +275,17 @@ private fun HomeStateAlerts(
     if (!state.canScan) {
         StateFeedbackCard(
             title = "Escaneo en espera",
-            message = "Puedes escanear en ${(state.remainingThrottleMs / 1000L).coerceAtLeast(1L)}s.",
+            message = "Puedes escanear en ${(state.remainingThrottleMs / 1000L).coerceAtLeast(1L)}s. Android limita escaneos para ahorrar batería.",
             tone = FeedbackTone.Info
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    if (state.systemDegradation == SystemDegradation.ScanBlockedBySystem) {
+        StateFeedbackCard(
+            title = "El sistema está limitando el escaneo",
+            message = "El dispositivo está devolviendo listas vacías de forma repetida. Algunos OEM restringen esta función.",
+            tone = FeedbackTone.Warning
         )
         Spacer(modifier = Modifier.height(12.dp))
     }
@@ -318,7 +362,7 @@ private fun SignalSection(signalHistory: List<Int>) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Señal: ${SignalCalculator.rssiToQuality(lastRssi)}",
+            text = humanSignalSummary(lastRssi),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -336,6 +380,22 @@ private fun SignalSection(signalHistory: List<Int>) {
         Spacer(modifier = Modifier.height(12.dp))
 
         SignalReferenceRow()
+    }
+}
+
+private enum class HomeContentState {
+    WifiDisabled,
+    Connected,
+    Disconnected
+}
+
+private fun humanSignalSummary(rssi: Int?): String {
+    return when {
+        rssi == null -> "Señal: Aún estamos reuniendo datos"
+        rssi >= -50 -> "Señal: Excelente (estable para videollamadas)"
+        rssi >= -60 -> "Señal: Buena (estable para navegación)"
+        rssi >= -70 -> "Señal: Regular (puede variar)"
+        else -> "Señal: Mala (puede cortar la conexión)"
     }
 }
 

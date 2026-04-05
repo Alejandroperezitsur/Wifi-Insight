@@ -29,6 +29,23 @@ enum class InternetStatus {
     UNAVAILABLE
 }
 
+enum class ConnectionQuality {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED_NO_INTERNET,
+    CONNECTED_INTERNET
+}
+
+enum class UserAction {
+    Scan,
+    RefreshConnection
+}
+
+sealed class SystemDegradation {
+    data object None : SystemDegradation()
+    data object ScanBlockedBySystem : SystemDegradation()
+}
+
 sealed class BlockingState {
     data object NoWifi : BlockingState()
     data object NoPermission : BlockingState()
@@ -51,8 +68,12 @@ data class WifiState(
     val signalStrength: Int? = null,
     val signalHistory: List<Int> = emptyList(),
     val internetStatus: InternetStatus = InternetStatus.UNKNOWN,
+    val connectionQuality: ConnectionQuality = ConnectionQuality.DISCONNECTED,
     val isRefreshingConnection: Boolean = false,
     val isScanning: Boolean = false,
+    val isProcessing: Boolean = false,
+    val lastAction: UserAction? = null,
+    val activeActionToken: Long? = null,
     val networks: List<WifiNetwork> = emptyList(),
     val lastScanTimestamp: Long = 0L,
     val remainingThrottleMs: Long = 0L,
@@ -60,6 +81,7 @@ data class WifiState(
     val permissionState: PermissionState = PermissionState.Denied,
     val locationEnabled: Boolean = true,
     val blockingState: BlockingState? = null,
+    val systemDegradation: SystemDegradation = SystemDegradation.None,
     val errorQueue: List<UiError> = emptyList(),
     val error: UiError? = null,
     val stateVersion: Long = 0L

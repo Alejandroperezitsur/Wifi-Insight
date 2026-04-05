@@ -29,13 +29,14 @@ sealed class ConnectionState {
         val rssi: Int? = null,
         val hasInternet: Boolean = false,
         val isValidated: Boolean = false,
-        val internetStatus: InternetStatus = InternetStatus.UNKNOWN
+        val internetStatus: InternetStatus = InternetStatus.UNKNOWN,
+        val connectionQuality: ConnectionQuality = ConnectionQuality.DISCONNECTED
     ) : ConnectionState() {
-        override val message: String = when (internetStatus) {
-            InternetStatus.AVAILABLE -> "Conectado a $ssid (Internet OK)"
-            InternetStatus.CHECKING -> "Conectado a $ssid (Validando...)"
-            InternetStatus.UNAVAILABLE -> "Conectado a $ssid (Sin internet)"
-            InternetStatus.UNKNOWN -> "Conectado a $ssid"
+        override val message: String = when (connectionQuality) {
+            ConnectionQuality.CONNECTED_INTERNET -> "Conectado a $ssid (Internet OK)"
+            ConnectionQuality.CONNECTED_NO_INTERNET -> "Conectado a $ssid (Sin internet)"
+            ConnectionQuality.CONNECTING -> "Conectado a $ssid (Validando...)"
+            ConnectionQuality.DISCONNECTED -> "Conectado a $ssid"
         }
 
         val safeSsid: String

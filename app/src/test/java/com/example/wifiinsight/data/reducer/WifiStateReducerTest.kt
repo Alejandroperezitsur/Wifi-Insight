@@ -2,6 +2,7 @@ package com.example.wifiinsight.data.reducer
 
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
+import com.example.wifiinsight.data.model.UserAction
 import com.example.wifiinsight.data.model.WifiEvent
 import com.example.wifiinsight.data.model.WifiState
 import org.junit.Assert.assertEquals
@@ -89,5 +90,22 @@ class WifiStateReducerTest {
 
         assertTrue(startedState.isRefreshingConnection)
         assertFalse(finishedState.isRefreshingConnection)
+    }
+
+    @Test
+    fun actionTimeoutAddsVisibleErrorOnlyForActiveAction() {
+        val startedState = WifiStateReducer.reduce(
+            WifiState(),
+            WifiEvent.ActionStarted(UserAction.Scan, token = 7L)
+        )
+
+        val timedOutState = WifiStateReducer.reduce(
+            startedState,
+            WifiEvent.ActionTimeout(UserAction.Scan, token = 7L)
+        )
+
+        assertTrue(timedOutState.isProcessing)
+        assertEquals("Tardó demasiado. Intenta de nuevo", timedOutState.errorQueue.firstOrNull()?.message)
+        assertEquals(7L, timedOutState.activeActionToken)
     }
 }

@@ -60,6 +60,16 @@ class FakeWifiRepository : WifiRepository {
         _uiState.update { it.copy(permissionState = nextPermissionState) }
     }
 
+    override fun softReset() {
+        _uiState.update {
+            WifiState(
+                wifiEnabled = true,
+                locationEnabled = true,
+                permissionState = nextPermissionState
+            )
+        }
+    }
+
     override fun markPermissionRequested() = Unit
 
     override fun clearError() {

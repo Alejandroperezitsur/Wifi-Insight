@@ -24,8 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.wifiinsight.data.model.ConnectionQuality
 import com.example.wifiinsight.data.model.ConnectionState
-import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.domain.util.SignalCalculator
 import com.example.wifiinsight.presentation.common.components.SignalIndicator
 import com.example.wifiinsight.presentation.common.components.getSignalColor
@@ -53,12 +53,8 @@ private fun ConnectedNetworkCard(
     val rssi = connectionState.rssi ?: -100
     val signalLevel = SignalCalculator.rssiToSignalLevel(rssi)
     val signalColor = getSignalColor(signalLevel)
-    val statusMessage = when (connectionState.internetStatus) {
-        InternetStatus.AVAILABLE -> "Internet funcionando"
-        InternetStatus.CHECKING -> "Verificando conexión..."
-        InternetStatus.UNAVAILABLE -> "Sin internet (posible portal cautivo)"
-        InternetStatus.UNKNOWN -> "Verificando conexión..."
-    }
+    val statusMessage = connectionStatusMessage(connectionState)
+    val statusColor = connectionStatusColor(connectionState.connectionQuality, signalColor)
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -91,7 +87,7 @@ private fun ConnectedNetworkCard(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     StatusLabel(
-                        color = signalColor,
+                        color = statusColor,
                         text = statusMessage
                     )
                 }
@@ -123,9 +119,41 @@ private fun ConnectedNetworkCard(
             Spacer(modifier = Modifier.height(8.dp))
             DetailRow(
                 label = "Señal",
-                value = "${connectionState.rssi ?: "—"} dBm"
+                value = signalConfidenceMessage(connectionState.rssi)
             )
         }
+    }
+}
+
+private fun connectionStatusMessage(connectionState: ConnectionState.Connected): String {
+    return when (connectionState.connectionQuality) {
+        ConnectionQuality.CONNECTING -> "Conectando..."
+        ConnectionQuality.CONNECTED_NO_INTERNET -> "Conectado, pero esta red no tiene acceso a internet"
+        ConnectionQuality.CONNECTED_INTERNET -> "Conectado con internet"
+        ConnectionQuality.DISCONNECTED -> "Conectado"
+    }
+}
+
+private fun signalConfidenceMessage(rssi: Int?): String {
+    return when {
+        rssi == null -> "Señal no disponible todavía"
+        rssi >= -50 -> "Excelente (estable para videollamadas)"
+        rssi >= -60 -> "Buena (estable para navegación)"
+        rssi >= -70 -> "Regular (puede variar)"
+        else -> "Mala (puede fallar la conexión)"
+    }
+}
+
+@Composable
+private fun connectionStatusColor(
+    quality: ConnectionQuality,
+    fallback: Color
+): Color {
+    return when (quality) {
+        ConnectionQuality.CONNECTING -> MaterialTheme.colorScheme.secondary
+        ConnectionQuality.CONNECTED_NO_INTERNET -> MaterialTheme.colorScheme.error
+        ConnectionQuality.CONNECTED_INTERNET -> MaterialTheme.colorScheme.primary
+        ConnectionQuality.DISCONNECTED -> fallback
     }
 }
 

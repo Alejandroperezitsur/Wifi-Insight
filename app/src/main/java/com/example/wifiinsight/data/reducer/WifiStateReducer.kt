@@ -1,9 +1,12 @@
 package com.example.wifiinsight.data.reducer
 
 import com.example.wifiinsight.data.model.BlockingState
+import com.example.wifiinsight.data.model.ConnectionQuality
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
+import com.example.wifiinsight.data.model.SystemDegradation
 import com.example.wifiinsight.data.model.UiError
+import com.example.wifiinsight.data.model.UserAction
 import com.example.wifiinsight.data.model.WifiEvent
 import com.example.wifiinsight.data.model.WifiState
 
@@ -11,6 +14,44 @@ object WifiStateReducer {
 
     fun reduce(state: WifiState, event: WifiEvent): WifiState {
         val updatedState = when (event) {
+            is WifiEvent.ActionStarted -> state.copy(
+                isProcessing = true,
+                lastAction = event.action,
+                activeActionToken = event.token,
+                error = null,
+                stateVersion = state.stateVersion + 1
+            )
+
+            is WifiEvent.ActionFinished -> {
+                if (state.activeActionToken != event.token) {
+                    state
+                } else {
+                    state.copy(
+                        isProcessing = false,
+                        activeActionToken = null,
+                        stateVersion = state.stateVersion + 1
+                    )
+                }
+            }
+
+            is WifiEvent.ActionTimeout -> {
+                if (state.activeActionToken != event.token || !state.isProcessing) {
+                    state
+                } else {
+                    state.copy(
+                        errorQueue = enqueueError(
+                            state.errorQueue,
+                            UiError(
+                                title = "La acción tardó demasiado",
+                                message = "Tardó demasiado. Intenta de nuevo",
+                                isRecoverable = true
+                            )
+                        ),
+                        stateVersion = state.stateVersion + 1
+                    )
+                }
+            }
+
             is WifiEvent.WifiToggled -> state.copy(
                 wifiEnabled = event.enabled,
                 isConnected = if (event.enabled) state.isConnected else false,
@@ -21,6 +62,7 @@ object WifiStateReducer {
                 signalHistory = if (event.enabled) state.signalHistory else emptyList(),
                 signalStrength = if (event.enabled) state.signalStrength else null,
                 internetStatus = if (event.enabled) state.internetStatus else InternetStatus.UNKNOWN,
+                connectionQuality = if (event.enabled) state.connectionQuality else ConnectionQuality.DISCONNECTED,
                 isRefreshingConnection = if (event.enabled) state.isRefreshingConnection else false,
                 stateVersion = state.stateVersion + 1
             )
@@ -36,6 +78,7 @@ object WifiStateReducer {
                 signalStrength = if (event.enabled) null else state.signalStrength,
                 signalHistory = if (event.enabled) emptyList() else state.signalHistory,
                 internetStatus = if (event.enabled) InternetStatus.UNKNOWN else state.internetStatus,
+                connectionQuality = if (event.enabled) ConnectionQuality.DISCONNECTED else state.connectionQuality,
                 isRefreshingConnection = if (event.enabled) false else state.isRefreshingConnection,
                 stateVersion = state.stateVersion + 1
             )
@@ -51,6 +94,7 @@ object WifiStateReducer {
                         signalStrength = null,
                         signalHistory = emptyList(),
                         internetStatus = InternetStatus.UNKNOWN,
+                        connectionQuality = ConnectionQuality.DISCONNECTED,
                         stateVersion = state.stateVersion + 1
                     )
                 } else {
@@ -64,6 +108,11 @@ object WifiStateReducer {
                         signalStrength = event.rssi,
                         signalHistory = if (isNewConnection) emptyList() else state.signalHistory,
                         internetStatus = if (isNewConnection) InternetStatus.UNKNOWN else state.internetStatus,
+                        connectionQuality = if (isNewConnection) {
+                            ConnectionQuality.CONNECTING
+                        } else {
+                            state.connectionQuality
+                        },
                         stateVersion = state.stateVersion + 1
                     )
                 }
@@ -117,11 +166,22 @@ object WifiStateReducer {
 
             is WifiEvent.InternetCheckStarted -> state.copy(
                 internetStatus = InternetStatus.CHECKING,
+                connectionQuality = if (state.isConnected) {
+                    ConnectionQuality.CONNECTING
+                } else {
+                    ConnectionQuality.DISCONNECTED
+                },
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.InternetChecked -> state.copy(
                 internetStatus = event.status,
+                connectionQuality = when {
+                    !state.isConnected -> ConnectionQuality.DISCONNECTED
+                    event.status == InternetStatus.AVAILABLE -> ConnectionQuality.CONNECTED_INTERNET
+                    event.status == InternetStatus.UNAVAILABLE -> ConnectionQuality.CONNECTED_NO_INTERNET
+                    else -> ConnectionQuality.CONNECTING
+                },
                 stateVersion = state.stateVersion + 1
             )
 
@@ -137,6 +197,11 @@ object WifiStateReducer {
 
             is WifiEvent.ThrottleUpdated -> state.copy(
                 remainingThrottleMs = event.remainingMs.coerceAtLeast(0L),
+                stateVersion = state.stateVersion + 1
+            )
+
+            is WifiEvent.SystemDegraded -> state.copy(
+                systemDegradation = event.degradation,
                 stateVersion = state.stateVersion + 1
             )
 
@@ -171,6 +236,11 @@ object WifiStateReducer {
         return state.copy(
             isConnected = normalizedConnected,
             internetStatus = if (normalizedConnected) state.internetStatus else InternetStatus.UNKNOWN,
+            connectionQuality = when {
+                !normalizedConnected -> ConnectionQuality.DISCONNECTED
+                state.connectionQuality == ConnectionQuality.DISCONNECTED -> ConnectionQuality.CONNECTING
+                else -> state.connectionQuality
+            },
             canScan = state.remainingThrottleMs <= 0L,
             blockingState = blockingState,
             error = state.errorQueue.firstOrNull()

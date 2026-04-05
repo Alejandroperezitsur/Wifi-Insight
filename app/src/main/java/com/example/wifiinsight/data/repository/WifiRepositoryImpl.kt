@@ -20,7 +20,9 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
+import com.example.wifiinsight.data.model.SystemDegradation
 import com.example.wifiinsight.data.model.UiError
+import com.example.wifiinsight.data.model.UserAction
 import com.example.wifiinsight.data.model.WifiEvent
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.model.WifiState
@@ -29,6 +31,7 @@ import com.example.wifiinsight.domain.util.InternetChecker
 import com.example.wifiinsight.domain.util.PermissionHandler
 import com.example.wifiinsight.domain.util.SettingsHelper
 import com.example.wifiinsight.domain.util.SystemSettingsHelper
+import com.example.wifiinsight.domain.util.WifiDebugLogger
 import com.example.wifiinsight.domain.util.WifiStateMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +68,8 @@ class WifiRepositoryImpl(
         private const val SCAN_TIMEOUT_MS = 10_000L
         private const val INTERNET_TIMEOUT_MS = 5_000L
         private const val STOP_MONITORING_DELAY_MS = 5_000L
+        private const val ACTION_TIMEOUT_MS = 3_000L
+        private const val AUTO_RECOVERY_DELAY_MS = 1_500L
     }
 
     private data class SystemSnapshot(
@@ -95,9 +100,14 @@ class WifiRepositoryImpl(
     private var monitoringJobs: List<Job> = emptyList()
     private var monitoringStopJob: Job? = null
     private var lastScanElapsedTime = 0L
+    private var emptyScanCount = 0
+    private var hasAutoRetriedEmptyScan = false
     private var throttleJob: Job? = null
     private var internetCheckJob: Job? = null
+    private var actionTimeoutJob: Job? = null
+    private var autoRecoveryJob: Job? = null
     private var currentInternetTarget: String? = null
+    private var nextActionToken = 0L
 
     init {
         observeUiSubscriptions()
@@ -107,12 +117,14 @@ class WifiRepositoryImpl(
     override suspend fun scanNetworks() {
         withContext(repositoryDispatcher) {
             scanMutex.withLock {
+                val actionToken = beginAction(UserAction.Scan)
                 val snapshot = readSystemSnapshot()
                 applySystemSnapshot(snapshot)
 
                 when {
                     snapshot.serviceError != null -> {
                         dispatch(WifiEvent.ScanFailed(snapshot.serviceError.message))
+                        finishAction(UserAction.Scan, actionToken)
                         return@withContext
                     }
 
@@ -121,6 +133,7 @@ class WifiRepositoryImpl(
                             title = "Modo avión activado",
                             message = "Desactiva el modo avión para escanear redes WiFi."
                         )
+                        finishAction(UserAction.Scan, actionToken)
                         return@withContext
                     }
 
@@ -129,6 +142,7 @@ class WifiRepositoryImpl(
                             title = "WiFi desactivado",
                             message = "Abre ajustes WiFi para activar la red inalámbrica."
                         )
+                        finishAction(UserAction.Scan, actionToken)
                         return@withContext
                     }
 
@@ -137,6 +151,7 @@ class WifiRepositoryImpl(
                             title = "Ubicación desactivada",
                             message = "Activa la ubicación para escanear redes WiFi."
                         )
+                        finishAction(UserAction.Scan, actionToken)
                         return@withContext
                     }
 
@@ -145,6 +160,7 @@ class WifiRepositoryImpl(
                             title = "Permisos requeridos",
                             message = "Permite los permisos necesarios para escanear redes WiFi."
                         )
+                        finishAction(UserAction.Scan, actionToken)
                         return@withContext
                     }
                 }
@@ -157,6 +173,7 @@ class WifiRepositoryImpl(
                         title = "Escaneo limitado",
                         message = "Puedes escanear en ${remaining / 1000L}s."
                     )
+                    finishAction(UserAction.Scan, actionToken)
                     return@withContext
                 }
 
@@ -166,12 +183,34 @@ class WifiRepositoryImpl(
                 try {
                     val results = performRealScan()
                     lastScanElapsedTime = SystemClock.elapsedRealtime()
+                    if (results.isEmpty()) {
+                        emptyScanCount++
+                        scheduleAutoRecoveryIfNeeded()
+                    } else {
+                        emptyScanCount = 0
+                        hasAutoRetriedEmptyScan = false
+                        autoRecoveryJob?.cancel()
+                    }
                     dispatch(
                         WifiEvent.ScanCompleted(
                             results = results,
                             completedAtElapsedMs = lastScanElapsedTime
                         )
                     )
+                    dispatch(
+                        WifiEvent.SystemDegraded(
+                            if (emptyScanCount >= 3) {
+                                SystemDegradation.ScanBlockedBySystem
+                            } else {
+                                SystemDegradation.None
+                            }
+                        )
+                    )
+                    if (emptyScanCount >= 5) {
+                        repositoryScope.launch {
+                            softResetInternal(triggeredBySystem = true)
+                        }
+                    }
                     dispatch(WifiEvent.ThrottleUpdated(0L))
                 } catch (error: Exception) {
                     Log.e(TAG, "scanNetworks failed", error)
@@ -180,6 +219,8 @@ class WifiRepositoryImpl(
                             error.message ?: "No se pudo completar el escaneo de redes."
                         )
                     )
+                } finally {
+                    finishAction(UserAction.Scan, actionToken)
                 }
             }
         }
@@ -187,12 +228,14 @@ class WifiRepositoryImpl(
 
     override suspend fun reEvaluateConnection() {
         withContext(repositoryDispatcher) {
+            val actionToken = beginAction(UserAction.RefreshConnection)
             dispatch(WifiEvent.ConnectionRefreshStarted)
             try {
                 internetChecker.invalidateCache()
                 refreshSystemStateInternal(forceInternetCheck = true)
             } finally {
                 dispatch(WifiEvent.ConnectionRefreshFinished)
+                finishAction(UserAction.RefreshConnection, actionToken)
             }
         }
     }
@@ -214,6 +257,12 @@ class WifiRepositoryImpl(
 
     override fun refreshPermissions(activity: Activity?) {
         applySystemSnapshot(readSystemSnapshot(activity))
+    }
+
+    override fun softReset() {
+        repositoryScope.launch {
+            softResetInternal(triggeredBySystem = false)
+        }
     }
 
     override fun markPermissionRequested() {
@@ -460,9 +509,11 @@ class WifiRepositoryImpl(
     }
 
     private fun dispatch(event: WifiEvent) {
+        val previousState = _uiState.value
         _uiState.update { currentState ->
             WifiStateReducer.reduce(currentState, event)
         }
+        logStateEvent(previousState, event, _uiState.value)
     }
 
     private fun dispatchError(title: String, message: String) {
@@ -475,6 +526,114 @@ class WifiRepositoryImpl(
                 )
             )
         )
+    }
+
+    private fun beginAction(action: UserAction): Long {
+        nextActionToken += 1
+        val token = nextActionToken
+        dispatch(WifiEvent.ActionStarted(action, token))
+        startActionTimeout(action, token)
+        return token
+    }
+
+    private fun finishAction(action: UserAction, token: Long) {
+        actionTimeoutJob?.cancel()
+        dispatch(WifiEvent.ActionFinished(action, token))
+    }
+
+    private fun startActionTimeout(action: UserAction, token: Long) {
+        actionTimeoutJob?.cancel()
+        actionTimeoutJob = repositoryScope.launch {
+            delay(ACTION_TIMEOUT_MS)
+            dispatch(WifiEvent.ActionTimeout(action, token))
+        }
+    }
+
+    private suspend fun softResetInternal(triggeredBySystem: Boolean) {
+        withContext(repositoryDispatcher) {
+            val currentState = _uiState.value
+            emptyScanCount = 0
+            hasAutoRetriedEmptyScan = false
+            autoRecoveryJob?.cancel()
+            actionTimeoutJob?.cancel()
+            throttleJob?.cancel()
+            internetCheckJob?.cancel()
+            currentInternetTarget = null
+            if (triggeredBySystem) {
+                WifiDebugLogger.log("FORCED_RESET")
+            } else {
+                WifiDebugLogger.log("SOFT_RESET")
+            }
+            _uiState.update {
+                WifiState(
+                    wifiEnabled = currentState.wifiEnabled,
+                    isAirplaneMode = currentState.isAirplaneMode,
+                    permissionState = currentState.permissionState,
+                    locationEnabled = currentState.locationEnabled
+                )
+            }
+            refreshSystemStateInternal(forceInternetCheck = true)
+            val refreshedState = _uiState.value
+            if (refreshedState.canScan &&
+                refreshedState.blockingState == null &&
+                !refreshedState.isScanning
+            ) {
+                scanNetworks()
+            }
+        }
+    }
+
+    private fun scheduleAutoRecoveryIfNeeded() {
+        if (hasAutoRetriedEmptyScan || emptyScanCount <= 0) {
+            return
+        }
+        hasAutoRetriedEmptyScan = true
+        autoRecoveryJob?.cancel()
+        autoRecoveryJob = repositoryScope.launch {
+            delay(AUTO_RECOVERY_DELAY_MS)
+            val current = _uiState.value
+            if (current.networks.isEmpty() &&
+                current.canScan &&
+                !current.isScanning &&
+                current.blockingState == null
+            ) {
+                WifiDebugLogger.log("AUTO_RECOVERY_SCAN")
+                scanNetworks()
+            }
+        }
+    }
+
+    private fun logStateEvent(
+        previousState: WifiState,
+        event: WifiEvent,
+        currentState: WifiState
+    ) {
+        when (event) {
+            is WifiEvent.ScanStarted -> WifiDebugLogger.log("SCAN_STARTED")
+            is WifiEvent.ScanCompleted -> if (event.results.isEmpty()) {
+                WifiDebugLogger.log("SCAN_EMPTY")
+            }
+            is WifiEvent.SystemDegraded -> if (
+                event.degradation == SystemDegradation.ScanBlockedBySystem &&
+                previousState.systemDegradation != currentState.systemDegradation
+            ) {
+                WifiDebugLogger.log("OEM_BLOCK_DETECTED")
+            }
+            is WifiEvent.PermissionUpdated -> if (
+                event.state != PermissionState.Granted &&
+                previousState.permissionState != event.state
+            ) {
+                WifiDebugLogger.log("PERMISSION_DENIED")
+            }
+            is WifiEvent.ActionTimeout -> if (
+                previousState.activeActionToken == event.token &&
+                currentState.errorQueue.firstOrNull()?.message == "Tardó demasiado. Intenta de nuevo"
+            ) {
+                WifiDebugLogger.log("ACTION_TIMEOUT_${event.action.name}")
+            }
+            is WifiEvent.ScanFailed -> WifiDebugLogger.log("SCAN_FAILED")
+            else -> Unit
+        }
     }
 
     private fun updateConnectionState(forceInternetCheck: Boolean) {
@@ -551,12 +710,6 @@ class WifiRepositoryImpl(
             )
 
             when {
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) -> {
-                    currentInternetTarget = bssid.ifBlank { displaySsid }
-                    internetCheckJob?.cancel()
-                    dispatch(WifiEvent.InternetChecked(InternetStatus.AVAILABLE))
-                }
-
                 !hasInternetCapability -> {
                     currentInternetTarget = bssid.ifBlank { displaySsid }
                     internetCheckJob?.cancel()
@@ -565,7 +718,10 @@ class WifiRepositoryImpl(
 
                 else -> startInternetCheck(
                     target = bssid.ifBlank { displaySsid },
-                    forceInternetCheck = forceInternetCheck
+                    forceInternetCheck = forceInternetCheck,
+                    validatedHint = capabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                    )
                 )
             }
         } catch (error: SecurityException) {
@@ -583,7 +739,11 @@ class WifiRepositoryImpl(
         }
     }
 
-    private fun startInternetCheck(target: String, forceInternetCheck: Boolean) {
+    private fun startInternetCheck(
+        target: String,
+        forceInternetCheck: Boolean,
+        validatedHint: Boolean
+    ) {
         if (!forceInternetCheck && currentInternetTarget == target &&
             _uiState.value.internetStatus == InternetStatus.CHECKING
         ) {
@@ -611,6 +771,9 @@ class WifiRepositoryImpl(
                 _uiState.value.ssid.orEmpty()
             }
             if (activeTarget == target) {
+                if (!hasInternet && validatedHint) {
+                    WifiDebugLogger.log("INTERNET_FALSE_POSITIVE")
+                }
                 dispatch(
                     WifiEvent.InternetChecked(
                         if (hasInternet) InternetStatus.AVAILABLE else InternetStatus.UNAVAILABLE

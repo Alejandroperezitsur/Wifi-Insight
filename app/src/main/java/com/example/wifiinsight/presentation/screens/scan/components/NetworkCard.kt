@@ -1,6 +1,8 @@
 package com.example.wifiinsight.presentation.screens.scan.components
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +51,7 @@ import com.example.wifiinsight.ui.theme.getSecurityColor
 @Composable
 fun NetworkCard(
     network: WifiNetwork,
+    isConnected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -59,10 +62,17 @@ fun NetworkCard(
     val securityColor = remember(network.securityType) {
         getSecurityColor(network.securityType.name)
     }
+    val highlightColor = if (isConnected) Color(0xFF2E7D32) else Color.Transparent
     
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .animateContentSize()
+            .border(
+                width = if (isConnected) 2.dp else 0.dp,
+                color = highlightColor,
+                shape = RoundedCornerShape(16.dp)
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
@@ -107,6 +117,15 @@ fun NetworkCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (isConnected) {
+                        Text(
+                            text = "Conectada",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = highlightColor,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
                     // Security Chip
                     SecurityChip(
                         securityType = network.securityType.name,

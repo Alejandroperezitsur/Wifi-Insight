@@ -1,8 +1,10 @@
 package com.example.wifiinsight.data.model
 
 import android.net.wifi.ScanResult
+import androidx.compose.runtime.Stable
 import com.example.wifiinsight.domain.util.SignalCalculator
 
+@Stable
 data class WifiNetwork(
     val bssid: String,
     val ssid: String,

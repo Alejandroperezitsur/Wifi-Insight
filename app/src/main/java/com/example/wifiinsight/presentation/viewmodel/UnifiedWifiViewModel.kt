@@ -43,6 +43,10 @@ class UnifiedWifiViewModel @Inject constructor(
         repository.refreshPermissions(activity)
     }
 
+    fun softReset() {
+        repository.softReset()
+    }
+
     fun markPermissionRequested() {
         repository.markPermissionRequested()
     }
