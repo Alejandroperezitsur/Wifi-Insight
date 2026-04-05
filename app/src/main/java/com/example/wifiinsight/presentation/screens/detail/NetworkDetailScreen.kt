@@ -77,7 +77,7 @@ fun NetworkDetailScreen(
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val repository = remember { WifiRepositoryImpl(context) }
+    val repository = remember { WifiRepositoryImpl(context, com.example.wifiinsight.domain.util.InternetChecker()) }
     val connectUseCase = remember { ConnectToNetworkUseCase(repository) }
     // FIX CRÍTICO #5: Pasar SavedStateHandle real al ViewModel
     val viewModel: NetworkDetailViewModel = viewModel(

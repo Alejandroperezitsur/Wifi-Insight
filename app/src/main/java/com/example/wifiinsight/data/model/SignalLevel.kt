@@ -35,6 +35,12 @@ enum class SignalLevel(
         description = "Señal muy baja",
         minRssi = -100,
         maxRssi = -81
+    ),
+    DEAD(
+        label = "Sin señal",
+        description = "No hay señal",
+        minRssi = Int.MIN_VALUE,
+        maxRssi = -101
     );
 
     companion object {

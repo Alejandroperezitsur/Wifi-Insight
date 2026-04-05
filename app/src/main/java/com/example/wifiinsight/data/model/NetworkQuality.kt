@@ -46,6 +46,13 @@ data class NetworkQuality(
                     canStream4K = false,
                     suitableForGaming = false
                 )
+                SignalLevel.DEAD -> NetworkQuality(
+                    level = level,
+                    recommendation = "Sin señal. Verifica que el WiFi esté activado o acércate al router.",
+                    canStreamHD = false,
+                    canStream4K = false,
+                    suitableForGaming = false
+                )
             }
         }
     }

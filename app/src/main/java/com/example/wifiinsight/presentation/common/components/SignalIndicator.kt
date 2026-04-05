@@ -45,6 +45,7 @@ fun SignalIndicator(
                 SignalLevel.FAIR -> Icons.Default.NetworkWifi2Bar
                 SignalLevel.WEAK -> Icons.Default.NetworkWifi1Bar
                 SignalLevel.POOR -> Icons.Default.WifiOff
+                SignalLevel.DEAD -> Icons.Default.WifiOff
             }
         }
         else -> {
@@ -54,6 +55,7 @@ fun SignalIndicator(
                 SignalLevel.FAIR -> Icons.Default.SignalCellularAlt
                 SignalLevel.WEAK -> Icons.Default.SignalCellularConnectedNoInternet0Bar
                 SignalLevel.POOR -> Icons.Default.SignalCellular0Bar
+                SignalLevel.DEAD -> Icons.Default.SignalCellular0Bar
             }
         }
     }
@@ -88,6 +90,7 @@ fun getSignalColor(signalLevel: SignalLevel): Color {
         SignalLevel.FAIR -> Color(0xFFFFC107)
         SignalLevel.WEAK -> Color(0xFFFF9800)
         SignalLevel.POOR -> Color(0xFFF44336)
+        SignalLevel.DEAD -> Color(0xFF9E9E9E)
     }
 }
 

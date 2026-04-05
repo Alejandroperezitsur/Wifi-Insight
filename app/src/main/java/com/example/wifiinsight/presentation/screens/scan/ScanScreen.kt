@@ -1,9 +1,9 @@
 package com.example.wifiinsight.presentation.screens.scan
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,15 +18,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -41,26 +40,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import android.widget.Toast
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.wifiinsight.data.repository.WifiRepositoryImpl
-import com.example.wifiinsight.domain.usecase.ScanWifiNetworksUseCase
-import com.example.wifiinsight.presentation.common.components.GlobalStatus
-import com.example.wifiinsight.presentation.common.components.GlobalStatusBar
-import com.example.wifiinsight.presentation.common.components.LoadingButton
-import com.example.wifiinsight.presentation.common.components.NetworkListShimmer
+import com.example.wifiinsight.presentation.common.components.DemoModeBadge
 import com.example.wifiinsight.presentation.screens.scan.components.NetworkCard
 import com.example.wifiinsight.presentation.screens.scan.components.RadarAnimation
-import com.example.wifiinsight.presentation.common.components.DemoModeBadge
+import com.example.wifiinsight.presentation.viewmodel.UnifiedWifiViewModel
+import com.example.wifiinsight.data.repository.WifiRepositoryImpl
+import com.example.wifiinsight.domain.util.InternetChecker
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,23 +67,24 @@ fun ScanScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val application = context.applicationContext as android.app.Application
-    val repository = remember { WifiRepositoryImpl(context) }
-    val scanUseCase = remember { ScanWifiNetworksUseCase(repository) }
-    val viewModel: ScanViewModel = viewModel(
-        factory = ScanViewModel.provideFactory(application, repository, scanUseCase)
+    val viewModel: UnifiedWifiViewModel = viewModel(
+        factory = remember {
+            object : androidx.lifecycle.ViewModelProvider.Factory {
+                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                    val internetChecker = InternetChecker()
+                    val repository = WifiRepositoryImpl(context, internetChecker)
+                    @Suppress("UNCHECKED_CAST")
+                    return UnifiedWifiViewModel(repository) as T
+                }
+            }
+        }
     )
+    val uiState by viewModel.state.collectAsState()
 
-    val uiState by viewModel.uiState.collectAsState()
-    val isWifiEnabled by viewModel.isWifiEnabled.collectAsState()
-    val scanAttemptCount by viewModel.scanAttemptCount.collectAsState()
-    val isDemoMode by viewModel.isDemoMode.collectAsState()
-    val throttleRemaining by viewModel.throttleRemainingSeconds.collectAsState()
-    
-    // FIX CRÍTICO: Estado de permisos
-    var permissionState by remember { androidx.compose.runtime.mutableStateOf<PermissionScreenState>(PermissionScreenState.Checking) }
-    
-    // FIX: Launcher para solicitar permisos
+    // Estado de permisos
+    var permissionState by remember { mutableStateOf<PermissionScreenState>(PermissionScreenState.Checking) }
+
+    // Launcher para solicitar permisos
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -94,7 +93,7 @@ fun ScanScreen(
             PermissionScreenState.Granted
         } else {
             val permanentlyDenied = result.entries.any { (permission, granted) ->
-                !granted && !androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                !granted && !ActivityCompat.shouldShowRequestPermissionRationale(
                     context as android.app.Activity,
                     permission
                 )
@@ -103,7 +102,7 @@ fun ScanScreen(
             else PermissionScreenState.Denied
         }
     }
-    
+
     // Verificar permisos al inicio
     LaunchedEffect(Unit) {
         val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -111,45 +110,23 @@ fun ScanScreen(
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        
+
         val hasPermissions = requiredPermissions.all {
-            androidx.core.content.ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
         }
-        
+
         permissionState = if (hasPermissions) PermissionScreenState.Granted
         else PermissionScreenState.NotRequested
-        
-        if (hasPermissions && isWifiEnabled) {
+
+        if (hasPermissions && uiState.wifiEnabled) {
             viewModel.scanNetworks()
-        }
-    }
-    
-    val uiEvent by viewModel.uiEvent.collectAsState()
-    
-    // Determinar estado global para la barra de estado
-    val globalStatus = when (val state = uiState) {
-        is ScanUiState.Initial -> GlobalStatus.Loading
-        is ScanUiState.Loading -> GlobalStatus.Scanning
-        is ScanUiState.Timeout -> GlobalStatus.Timeout
-        is ScanUiState.Error -> GlobalStatus.Error
-        is ScanUiState.Success -> {
-            if (state.networks.isEmpty()) GlobalStatus.Disconnected
-            else GlobalStatus.Connected
         }
     }
 
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
-    
-    // FIX UX #8: Mostrar Toast cuando hay eventos de UI (doble-tap, throttling)
-    LaunchedEffect(uiEvent) {
-        uiEvent?.let { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            viewModel.consumeUiEvent()
-        }
-    }
 
-    LaunchedEffect(key1 = true) {
-        if (isWifiEnabled) {
+    LaunchedEffect(uiState.wifiEnabled) {
+        if (uiState.wifiEnabled && permissionState == PermissionScreenState.Granted) {
             viewModel.scanNetworks()
         }
     }
@@ -167,8 +144,8 @@ fun ScanScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { viewModel.retryScan() },
-                        enabled = uiState !is ScanUiState.Loading && isWifiEnabled
+                        onClick = { viewModel.scanNetworks() },
+                        enabled = !uiState.isScanning && uiState.wifiEnabled
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -183,9 +160,9 @@ fun ScanScreen(
             )
         },
         floatingActionButton = {
-            if (isWifiEnabled && uiState is ScanUiState.Success) {
+            if (uiState.wifiEnabled && !uiState.isScanning) {
                 FloatingActionButton(
-                    onClick = { viewModel.retryScan() },
+                    onClick = { viewModel.scanNetworks() },
                     containerColor = MaterialTheme.colorScheme.primary
                 ) {
                     Icon(
@@ -201,12 +178,12 @@ fun ScanScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // FIX CRÍTICO: DemoModeBadge siempre visible arriba cuando está activo
+            // Badge de modo demo
             DemoModeBadge(
-                isDemoMode = isDemoMode,
+                isDemoMode = uiState.isDemoMode,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
-            
+
             when {
                 permissionState != PermissionScreenState.Granted -> {
                     PermissionRequiredState(
@@ -220,57 +197,35 @@ fun ScanScreen(
                             permissionLauncher.launch(requiredPermissions)
                         },
                         onOpenSettings = {
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                            ).apply {
                                 data = android.net.Uri.fromParts("package", context.packageName, null)
                             }
                             context.startActivity(intent)
                         }
                     )
                 }
-                !isWifiEnabled -> {
+                !uiState.wifiEnabled -> {
                     WifiDisabledScanState(
                         onEnableWifi = { viewModel.openWifiSettings() }
                     )
                 }
-
-                uiState is ScanUiState.Initial || uiState is ScanUiState.Loading -> {
+                uiState.isScanning -> {
                     ScanningState()
                 }
-
-                uiState is ScanUiState.Error -> {
-                    val errorState = uiState as ScanUiState.Error
-                    ErrorScanState(
-                        message = errorState.message,
-                        canRetry = errorState.canRetry,
-                        onRetry = { viewModel.retryScan() }
+                uiState.scanResults.isEmpty() -> {
+                    EmptyScanState(
+                        onRetry = { viewModel.scanNetworks() }
                     )
                 }
-                
-                uiState is ScanUiState.Timeout -> {
-                    TimeoutScanState(
-                        onRetry = { viewModel.retryScan() },
-                        attemptCount = scanAttemptCount
+                else -> {
+                    NetworksList(
+                        networks = uiState.scanResults,
+                        onNetworkClick = { network ->
+                            onNavigateToDetail(network.id)
+                        }
                     )
-                }
-
-                uiState is ScanUiState.Success -> {
-                    val successState = uiState as ScanUiState.Success
-                    val networks = successState.networks
-
-                    if (networks.isEmpty()) {
-                        EmptyScanState(
-                            onRetry = { viewModel.retryScan() },
-                            attemptCount = scanAttemptCount
-                        )
-                    } else {
-                        NetworksList(
-                            networks = networks,
-                            isScanning = successState.isScanning,
-                            onNetworkClick = { network ->
-                                onNavigateToDetail(network.id)
-                            }
-                        )
-                    }
                 }
             }
         }
@@ -290,18 +245,18 @@ private fun ScanningState() {
         ) {
             RadarAnimation(isScanning = true)
         }
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         Text(
             text = "Analizando frecuencias...",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Text(
             text = "Buscando redes WiFi disponibles",
             style = MaterialTheme.typography.bodyMedium,
@@ -313,50 +268,22 @@ private fun ScanningState() {
 @Composable
 private fun NetworksList(
     networks: List<com.example.wifiinsight.data.model.WifiNetwork>,
-    isScanning: Boolean,
     onNetworkClick: (com.example.wifiinsight.data.model.WifiNetwork) -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize()
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Radar animation when refreshing
-        AnimatedVisibility(
-            visible = isScanning,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(140.dp)
-                    .padding(vertical = 16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                RadarAnimation(isScanning = true)
-            }
-        }
-
-        // Networks list
-        AnimatedContent(
-            targetState = networks,
-            label = "networks"
-        ) { currentNetworks ->
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(
-                    count = currentNetworks.size,
-                    key = { index -> currentNetworks[index].id }
-                ) { index ->
-                    val network = currentNetworks[index]
-                    NetworkCard(
-                        network = network,
-                        onClick = { onNetworkClick(network) }
-                    )
-                }
-            }
+        items(
+            count = networks.size,
+            key = { index -> networks[index].id }
+        ) { index ->
+            val network = networks[index]
+            NetworkCard(
+                network = network,
+                onClick = { onNetworkClick(network) }
+            )
         }
     }
 }
@@ -386,27 +313,27 @@ private fun WifiDisabledScanState(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             Text(
                 text = "WiFi Desactivado",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Text(
                 text = "Activa el WiFi para buscar redes",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
-            androidx.compose.material3.Button(
+
+            Button(
                 onClick = onEnableWifi
             ) {
                 Text("Activar WiFi")
@@ -417,8 +344,7 @@ private fun WifiDisabledScanState(
 
 @Composable
 private fun EmptyScanState(
-    onRetry: () -> Unit,
-    attemptCount: Int = 0
+    onRetry: () -> Unit
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -441,28 +367,28 @@ private fun EmptyScanState(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             Text(
                 text = "No se encontraron redes",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Text(
                 text = "Intenta moverte a otra ubicación o verifica tu conexión",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
-            androidx.compose.material3.Button(
+
+            Button(
                 onClick = onRetry
             ) {
                 Text("Buscar de nuevo")
@@ -471,108 +397,6 @@ private fun EmptyScanState(
     }
 }
 
-@Composable
-private fun ErrorScanState(
-    message: String,
-    canRetry: Boolean = true,
-    onRetry: () -> Unit
-) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp)
-        ) {
-            Text(
-                text = "Error",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.error
-            )
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            androidx.compose.material3.Button(
-                onClick = onRetry,
-                enabled = canRetry
-            ) {
-                Text("Intentar de nuevo")
-            }
-        }
-    }
-}
-
-@Composable
-private fun TimeoutScanState(
-    onRetry: () -> Unit,
-    attemptCount: Int = 0
-) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .background(
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        RoundedCornerShape(24.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Text(
-                text = "Esto está tardando...",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = "El escaneo está tomando más tiempo de lo esperado. ${if (attemptCount > 0) "Intento #$attemptCount" else ""}",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Button(
-                onClick = onRetry,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-/**
- * Estados de permisos para la pantalla de escaneo
- */
 private enum class PermissionScreenState {
     Checking,
     NotRequested,
@@ -581,9 +405,6 @@ private enum class PermissionScreenState {
     Granted
 }
 
-/**
- * UI para estados de permisos requeridos
- */
 @Composable
 private fun PermissionRequiredState(
     state: PermissionScreenState,
@@ -604,9 +425,9 @@ private fun PermissionRequiredState(
                 modifier = Modifier.size(80.dp),
                 tint = MaterialTheme.colorScheme.error
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             Text(
                 text = when (state) {
                     PermissionScreenState.PermanentlyDenied -> "Permiso denegado permanentemente"
@@ -616,23 +437,23 @@ private fun PermissionRequiredState(
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Text(
                 text = when (state) {
-                    PermissionScreenState.PermanentlyDenied -> 
+                    PermissionScreenState.PermanentlyDenied ->
                         "Necesitamos tu permiso para buscar redes WiFi. Abre Configuración para activarlo."
-                    else -> 
+                    else ->
                         "Para buscar redes WiFi cercanas, necesitamos acceso a tu ubicación (Android lo requiere para escanear redes)."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             if (state == PermissionScreenState.PermanentlyDenied) {
                 Button(
                     onClick = onOpenSettings,

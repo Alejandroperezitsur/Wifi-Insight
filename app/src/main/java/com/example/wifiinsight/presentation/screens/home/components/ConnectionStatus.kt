@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,12 +46,14 @@ fun ConnectionStatus(
     val (statusColor, statusText, icon) = when (connectionState) {
         is ConnectionState.Connected -> {
             when (connectionState.internetStatus) {
-                InternetStatus.VALIDATED -> 
+                InternetStatus.AVAILABLE -> 
                     Triple(Color(0xFF4CAF50), "Internet OK", Icons.Default.CheckCircle)
-                InternetStatus.UNVALIDATED -> 
-                    Triple(Color(0xFFFF9800), "Conectado (sin validar)", Icons.Default.Warning)
-                InternetStatus.NONE -> 
+                InternetStatus.CHECKING -> 
+                    Triple(Color(0xFFFF9800), "Conectando...", Icons.Default.Warning)
+                InternetStatus.UNAVAILABLE -> 
                     Triple(Color(0xFF9E9E9E), "Conectado (sin internet)", Icons.Default.Error)
+                InternetStatus.UNKNOWN -> 
+                    Triple(Color(0xFF9E9E9E), "Desconocido", Icons.Default.Error)
             }
         }
         is ConnectionState.Connecting -> 
@@ -123,20 +126,25 @@ fun InternetStatusIndicator(
     modifier: Modifier = Modifier
 ) {
     val (color, text, description) = when (status) {
-        InternetStatus.VALIDATED -> Triple(
+        InternetStatus.AVAILABLE -> Triple(
             Color(0xFF4CAF50),
             "Internet Validado",
             "Conexión a internet verificada y funcionando correctamente."
         )
-        InternetStatus.UNVALIDATED -> Triple(
+        InternetStatus.CHECKING -> Triple(
             Color(0xFFFF9800),
-            "Internet No Validado",
-            "Conectado pero sin acceso confirmado a internet. Posible portal cautivo."
+            "Verificando...",
+            "Comprobando conexión a internet."
         )
-        InternetStatus.NONE -> Triple(
+        InternetStatus.UNAVAILABLE -> Triple(
             Color(0xFFF44336),
             "Sin Internet",
             "Conectado a la red WiFi pero sin acceso a internet."
+        )
+        InternetStatus.UNKNOWN -> Triple(
+            Color(0xFF9E9E9E),
+            "Desconocido",
+            "Estado de internet desconocido."
         )
     }
 
@@ -151,9 +159,10 @@ fun InternetStatusIndicator(
         ) {
             Icon(
                 imageVector = when (status) {
-                    InternetStatus.VALIDATED -> Icons.Default.CheckCircle
-                    InternetStatus.UNVALIDATED -> Icons.Default.Warning
-                    InternetStatus.NONE -> Icons.Default.Error
+                    InternetStatus.AVAILABLE -> Icons.Default.CheckCircle
+                    InternetStatus.UNAVAILABLE -> Icons.Default.Warning
+                    InternetStatus.CHECKING -> Icons.Default.Refresh
+                    InternetStatus.UNKNOWN -> Icons.Default.Error
                 },
                 contentDescription = null,
                 tint = color,

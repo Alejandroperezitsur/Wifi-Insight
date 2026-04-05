@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.example.wifiinsight.data.model.PermissionState
 
 /**
  * Handler centralizado para gestión de permisos WiFi
@@ -44,9 +45,9 @@ class PermissionHandler(private val context: Context) {
         return when {
             hasAllPermissions() -> PermissionState.Granted
             activity == null -> PermissionState.Unknown
-            shouldShowRationale(activity) -> PermissionState.Denied
+            shouldShowRationale(activity) -> PermissionState.Denied(true)
             isPermanentlyDenied(activity) -> PermissionState.PermanentlyDenied
-            else -> PermissionState.Denied
+            else -> PermissionState.Denied(false)
         }
     }
 

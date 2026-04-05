@@ -46,23 +46,29 @@ fun StatusBadge(
     showPulse: Boolean = true
 ) {
     val (backgroundColor, contentColor, icon, text) = when (status) {
-        InternetStatus.VALIDATED -> listOf(
+        InternetStatus.AVAILABLE -> listOf(
             Color(0xFF00C853).copy(alpha = 0.15f),
             Color(0xFF00C853),
             Icons.Default.CheckCircle,
             "Internet OK"
         )
-        InternetStatus.UNVALIDATED -> listOf(
+        InternetStatus.CHECKING -> listOf(
             Color(0xFFFFB300).copy(alpha = 0.15f),
             Color(0xFFFFB300),
             Icons.Default.Warning,
-            "Sin validar"
+            "Verificando"
         )
-        InternetStatus.NONE -> listOf(
+        InternetStatus.UNAVAILABLE -> listOf(
             Color(0xFFFF1744).copy(alpha = 0.15f),
             Color(0xFFFF1744),
             Icons.Default.Error,
             "Sin internet"
+        )
+        InternetStatus.UNKNOWN -> listOf(
+            Color(0xFF9E9E9E).copy(alpha = 0.15f),
+            Color(0xFF9E9E9E),
+            Icons.Default.Error,
+            "Desconocido"
         )
     }.let { 
         StatusColors(
@@ -93,7 +99,7 @@ fun StatusBadge(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
             // Pulse indicator
-            if (showPulse && status == InternetStatus.VALIDATED) {
+            if (showPulse && status == InternetStatus.AVAILABLE) {
                 PulsingDot(color = animatedContent)
                 Spacer(modifier = Modifier.width(8.dp))
             }

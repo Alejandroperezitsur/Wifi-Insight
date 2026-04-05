@@ -5,7 +5,7 @@ import com.example.wifiinsight.data.repository.WifiRepository
 import kotlinx.coroutines.flow.Flow
 
 class ScanWifiNetworksUseCase(private val repository: WifiRepository) {
-    operator fun invoke(): Flow<Result<List<WifiNetwork>>> {
-        return repository.scanNetworks()
+    suspend operator fun invoke() {
+        repository.scanNetworks()
     }
 }

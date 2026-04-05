@@ -8,8 +8,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.net.HttpURLConnection
 import java.net.URL
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * InternetChecker v3.1 - RESILIENTE
@@ -20,8 +18,7 @@ import javax.inject.Singleton
  * - Circuit breaker (si falla 3 veces seguidas, usar cache extendido)
  * - Timeout agresivo (< 2s)
  */
-@Singleton
-class InternetChecker @Inject constructor() {
+class InternetChecker {
     
     companion object {
         private const val TEST_URL = "https://clients3.google.com/generate_204"
