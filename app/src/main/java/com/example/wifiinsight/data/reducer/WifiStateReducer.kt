@@ -1,19 +1,16 @@
 package com.example.wifiinsight.data.reducer
 
+import com.example.wifiinsight.data.model.BlockingState
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
+import com.example.wifiinsight.data.model.UiError
 import com.example.wifiinsight.data.model.WifiEvent
 import com.example.wifiinsight.data.model.WifiState
 
-/**
- * State Reducer v3.3 - HARDENING FAANG LEVEL
- * Pure function: (State, Event) -> State
- * TODA la lógica de estado está aquí. NO hay lógica dispersa.
- */
 object WifiStateReducer {
 
     fun reduce(state: WifiState, event: WifiEvent): WifiState {
-        return when (event) {
+        val updatedState = when (event) {
             is WifiEvent.WifiToggled -> state.copy(
                 wifiEnabled = event.enabled,
                 isConnected = if (event.enabled) state.isConnected else false,
@@ -73,13 +70,15 @@ object WifiStateReducer {
             }
 
             is WifiEvent.SignalUpdated -> {
-                if (!state.isConnected) return state
-                val newHistory = (state.signalHistory + event.rssi).takeLast(50)
-                state.copy(
-                    signalStrength = event.rssi,
-                    signalHistory = newHistory,
-                    stateVersion = state.stateVersion + 1
-                )
+                if (!state.isConnected) {
+                    state
+                } else {
+                    state.copy(
+                        signalStrength = event.rssi,
+                        signalHistory = (state.signalHistory + event.rssi).takeLast(50),
+                        stateVersion = state.stateVersion + 1
+                    )
+                }
             }
 
             is WifiEvent.ScanRequested -> state
@@ -87,24 +86,27 @@ object WifiStateReducer {
             is WifiEvent.ScanStarted -> state.copy(
                 isScanning = true,
                 error = null,
+                errorQueue = emptyList(),
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ScanCompleted -> state.copy(
                 isScanning = false,
-                scanResults = event.results,
+                networks = event.results,
+                lastScanTimestamp = event.completedAtElapsedMs,
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ScanFailed -> state.copy(
                 isScanning = false,
-                error = createError(event.message),
+                errorQueue = enqueueError(state.errorQueue, createError(event.message)),
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ConnectionRefreshStarted -> state.copy(
                 isRefreshingConnection = true,
                 error = null,
+                errorQueue = emptyList(),
                 stateVersion = state.stateVersion + 1
             )
 
@@ -134,23 +136,57 @@ object WifiStateReducer {
             )
 
             is WifiEvent.ThrottleUpdated -> state.copy(
-                scanThrottleRemaining = event.remainingSeconds,
+                remainingThrottleMs = event.remainingMs.coerceAtLeast(0L),
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ErrorOccurred -> state.copy(
-                error = event.error,
+                errorQueue = enqueueError(state.errorQueue, event.error),
                 stateVersion = state.stateVersion + 1
             )
 
             is WifiEvent.ErrorCleared -> state.copy(
-                error = null,
+                errorQueue = state.errorQueue.drop(1),
                 stateVersion = state.stateVersion + 1
             )
         }
+
+        return normalize(updatedState)
     }
 
-    private fun createError(message: String) = com.example.wifiinsight.data.model.UiError(
+    private fun normalize(state: WifiState): WifiState {
+        val normalizedConnected = state.isConnected &&
+            state.wifiEnabled &&
+            !state.isAirplaneMode &&
+            !state.ssid.isNullOrBlank()
+
+        val blockingState = when {
+            state.isAirplaneMode -> BlockingState.AirplaneMode
+            !state.wifiEnabled -> BlockingState.NoWifi
+            state.permissionState != PermissionState.Granted -> BlockingState.NoPermission
+            !state.locationEnabled -> BlockingState.LocationOff
+            else -> null
+        }
+
+        return state.copy(
+            isConnected = normalizedConnected,
+            internetStatus = if (normalizedConnected) state.internetStatus else InternetStatus.UNKNOWN,
+            canScan = state.remainingThrottleMs <= 0L,
+            blockingState = blockingState,
+            error = state.errorQueue.firstOrNull()
+        )
+    }
+
+    private fun enqueueError(currentQueue: List<UiError>, error: UiError): List<UiError> {
+        val lastError = currentQueue.lastOrNull()
+        return if (lastError?.title == error.title && lastError.message == error.message) {
+            currentQueue
+        } else {
+            currentQueue + error
+        }
+    }
+
+    private fun createError(message: String) = UiError(
         title = "Error",
         message = message,
         isRecoverable = true

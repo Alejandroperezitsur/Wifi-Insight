@@ -18,7 +18,10 @@ sealed class WifiEvent {
     data class SignalUpdated(val rssi: Int) : WifiEvent()
     data object ScanRequested : WifiEvent()
     data object ScanStarted : WifiEvent()
-    data class ScanCompleted(val results: List<WifiNetwork>) : WifiEvent()
+    data class ScanCompleted(
+        val results: List<WifiNetwork>,
+        val completedAtElapsedMs: Long
+    ) : WifiEvent()
     data class ScanFailed(val message: String) : WifiEvent()
     data object ConnectionRefreshStarted : WifiEvent()
     data object ConnectionRefreshFinished : WifiEvent()
@@ -26,7 +29,7 @@ sealed class WifiEvent {
     data class InternetChecked(val status: InternetStatus) : WifiEvent()
     data class PermissionUpdated(val state: PermissionState) : WifiEvent()
     data class LocationStateChanged(val enabled: Boolean) : WifiEvent()
-    data class ThrottleUpdated(val remainingSeconds: Int) : WifiEvent()
+    data class ThrottleUpdated(val remainingMs: Long) : WifiEvent()
     data class ErrorOccurred(val error: UiError) : WifiEvent()
     data object ErrorCleared : WifiEvent()
 }

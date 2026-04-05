@@ -122,7 +122,7 @@ private fun NetworkDetailContent(
     onConnect: () -> Unit,
     onDismissResult: () -> Unit,
     onNavigateBack: () -> Unit
-) {
+    ) {
     val network = state.network ?: return
     val percentage = SignalCalculator.rssiToPercentage(network.rssi)
     val signalLevel = SignalCalculator.rssiToSignalLevel(network.rssi)
@@ -136,6 +136,15 @@ private fun NetworkDetailContent(
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
+        if (state.isStale) {
+            StateFeedbackCard(
+                title = "Red fuera de alcance",
+                message = "Mostrando último estado conocido.",
+                tone = FeedbackTone.Warning
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         when (val result = state.connectionResult) {
             ConnectionResultState.Idle -> Unit
             ConnectionResultState.Loading -> {

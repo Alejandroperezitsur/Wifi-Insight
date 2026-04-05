@@ -30,6 +30,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -53,6 +55,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.wifiinsight.data.model.BlockingState
 import com.example.wifiinsight.data.model.PermissionState
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.model.WifiState
@@ -74,6 +77,8 @@ fun ScanScreen(
     val activity = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
     var initialAutoScanDone by rememberSaveable { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val visibleNetworks = remember(uiState.networks) { uiState.networks.take(20) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -96,11 +101,17 @@ fun ScanScreen(
         }
     }
 
+    LaunchedEffect(uiState.errorQueue.firstOrNull()?.message) {
+        val error = uiState.errorQueue.firstOrNull() ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(error.message)
+        viewModel.clearError()
+    }
+
     LaunchedEffect(uiState.permissionState, uiState.wifiEnabled, uiState.locationEnabled) {
         if (uiState.permissionState == PermissionState.Granted &&
             uiState.wifiEnabled &&
             uiState.locationEnabled &&
-            uiState.scanResults.isEmpty() &&
+            uiState.networks.isEmpty() &&
             !uiState.isScanning &&
             !initialAutoScanDone
         ) {
@@ -120,6 +131,9 @@ fun ScanScreen(
 
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -132,9 +146,8 @@ fun ScanScreen(
                 actions = {
                     IconButton(
                         onClick = { viewModel.scanNetworks() },
-                        enabled = uiState.permissionState == PermissionState.Granted &&
-                            uiState.wifiEnabled &&
-                            uiState.locationEnabled &&
+                        enabled = uiState.canScan &&
+                            uiState.blockingState == null &&
                             !uiState.isScanning
                     ) {
                         Icon(
@@ -147,11 +160,7 @@ fun ScanScreen(
             )
         },
         floatingActionButton = {
-            if (uiState.permissionState == PermissionState.Granted &&
-                uiState.wifiEnabled &&
-                uiState.locationEnabled &&
-                !uiState.isScanning
-            ) {
+            if (uiState.blockingState == null && !uiState.isScanning && uiState.canScan) {
                 FloatingActionButton(
                     onClick = { viewModel.scanNetworks() },
                     containerColor = MaterialTheme.colorScheme.primary
@@ -171,12 +180,19 @@ fun ScanScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             ScanStateAlerts(
-                state = uiState,
-                onDismissError = viewModel::clearError
+                state = uiState
             )
 
-            when (uiState.permissionState) {
-                PermissionState.Denied -> {
+            when {
+                uiState.permissionState == PermissionState.PermanentlyDenied -> {
+                    PermissionRequiredState(
+                        message = "Los permisos están bloqueados. Actívalos desde Ajustes para volver a escanear.",
+                        actionLabel = "Abrir ajustes",
+                        onAction = { viewModel.openAppSettings() }
+                    )
+                }
+
+                uiState.blockingState == BlockingState.NoPermission -> {
                     PermissionRequiredState(
                         message = "Permite ubicación para escanear redes.",
                         actionLabel = "Conceder permisos",
@@ -187,54 +203,57 @@ fun ScanScreen(
                     )
                 }
 
-                PermissionState.PermanentlyDenied -> {
-                    PermissionRequiredState(
-                        message = "Los permisos están bloqueados. Actívalos desde Ajustes para volver a escanear.",
-                        actionLabel = "Abrir ajustes",
-                        onAction = { viewModel.openAppSettings() }
+                uiState.blockingState == BlockingState.AirplaneMode -> {
+                    BlockingStateContent(
+                        title = "Modo avión activado",
+                        message = "Desactiva el modo avión para recuperar el WiFi.",
+                        actionLabel = "Desactivar modo avión",
+                        onAction = { viewModel.openWifiSettings() }
                     )
                 }
 
-                PermissionState.Granted -> {
+                uiState.blockingState == BlockingState.LocationOff -> {
+                    BlockingStateContent(
+                        title = "Ubicación desactivada",
+                        message = "Activa ubicación para escanear redes WiFi.",
+                        actionLabel = "Activa ubicación",
+                        onAction = { viewModel.openLocationSettings() }
+                    )
+                }
+
+                uiState.blockingState == BlockingState.NoWifi -> {
+                    BlockingStateContent(
+                        title = "WiFi desactivado",
+                        message = "Activa WiFi para comenzar.",
+                        actionLabel = "Activa WiFi",
+                        onAction = { viewModel.openWifiSettings() }
+                    )
+                }
+
+                else -> {
                     when {
-                        uiState.isAirplaneMode -> {
-                            BlockingState(
-                                title = "Modo avión activado",
-                                message = "Desactiva el modo avión para recuperar el WiFi.",
-                                actionLabel = "Abrir ajustes WiFi",
-                                onAction = { viewModel.openWifiSettings() }
-                            )
-                        }
-
-                        !uiState.locationEnabled -> {
-                            BlockingState(
-                                title = "Ubicación desactivada",
-                                message = "Activa ubicación para escanear redes WiFi.",
-                                actionLabel = "Abrir ubicación",
-                                onAction = { viewModel.openLocationSettings() }
-                            )
-                        }
-
-                        !uiState.wifiEnabled -> {
-                            BlockingState(
-                                title = "WiFi desactivado",
-                                message = "Activa WiFi para comenzar.",
-                                actionLabel = "Abrir ajustes WiFi",
-                                onAction = { viewModel.openWifiSettings() }
-                            )
-                        }
-
                         uiState.isScanning -> {
                             ScanningState()
                         }
 
-                        uiState.scanResults.isEmpty() -> {
-                            EmptyScanState(onRetry = { viewModel.scanNetworks() })
+                        uiState.networks.isEmpty() -> {
+                            EmptyScanState(
+                                onRetry = { viewModel.scanNetworks() },
+                                canScan = uiState.canScan
+                            )
                         }
 
                         else -> {
+                            if (uiState.networks.size > visibleNetworks.size) {
+                                Text(
+                                    text = "Mostrando las 20 redes con mayor prioridad.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
                             NetworksList(
-                                networks = uiState.scanResults,
+                                networks = visibleNetworks,
                                 onNetworkClick = { network ->
                                     onNavigateToDetail(network.bssid)
                                 }
@@ -249,25 +268,13 @@ fun ScanScreen(
 
 @Composable
 private fun ScanStateAlerts(
-    state: WifiState,
-    onDismissError: () -> Unit
+    state: WifiState
 ) {
-    if (state.scanThrottleRemaining > 0) {
+    if (!state.canScan) {
         StateFeedbackCard(
             title = "Escaneo en espera",
-            message = "Puedes escanear en ${state.scanThrottleRemaining}s.",
+            message = "Puedes escanear en ${(state.remainingThrottleMs / 1000L).coerceAtLeast(1L)}s.",
             tone = FeedbackTone.Info
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-    }
-
-    state.error?.let { error ->
-        StateFeedbackCard(
-            title = error.title,
-            message = error.message,
-            tone = FeedbackTone.Error,
-            actionLabel = "Cerrar",
-            onAction = onDismissError
         )
         Spacer(modifier = Modifier.height(12.dp))
     }
@@ -331,13 +338,15 @@ private fun NetworksList(
 
 @Composable
 private fun EmptyScanState(
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    canScan: Boolean
 ) {
-    BlockingState(
+    BlockingStateContent(
         title = "No se encontraron redes",
         message = "No se encontraron redes. Intenta acercarte al router.",
         actionLabel = "Escanear redes",
-        onAction = onRetry
+        onAction = onRetry,
+        actionEnabled = canScan
     )
 }
 
@@ -347,7 +356,7 @@ private fun PermissionRequiredState(
     actionLabel: String,
     onAction: () -> Unit
 ) {
-    BlockingState(
+    BlockingStateContent(
         title = "Permisos requeridos",
         message = message,
         actionLabel = actionLabel,
@@ -356,11 +365,12 @@ private fun PermissionRequiredState(
 }
 
 @Composable
-private fun BlockingState(
+private fun BlockingStateContent(
     title: String,
     message: String,
     actionLabel: String,
-    onAction: () -> Unit
+    onAction: () -> Unit,
+    actionEnabled: Boolean = true
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -402,6 +412,7 @@ private fun BlockingState(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
+                enabled = actionEnabled,
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text(actionLabel)

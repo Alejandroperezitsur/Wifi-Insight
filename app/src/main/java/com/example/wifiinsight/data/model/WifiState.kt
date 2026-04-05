@@ -29,6 +29,13 @@ enum class InternetStatus {
     UNAVAILABLE
 }
 
+sealed class BlockingState {
+    data object NoWifi : BlockingState()
+    data object NoPermission : BlockingState()
+    data object LocationOff : BlockingState()
+    data object AirplaneMode : BlockingState()
+}
+
 /**
  * Estado unificado v3.3 - HARDENING FAANG LEVEL
  * Immutable state para Redux pattern
@@ -46,10 +53,20 @@ data class WifiState(
     val internetStatus: InternetStatus = InternetStatus.UNKNOWN,
     val isRefreshingConnection: Boolean = false,
     val isScanning: Boolean = false,
-    val scanResults: List<WifiNetwork> = emptyList(),
-    val scanThrottleRemaining: Int = 0,
+    val networks: List<WifiNetwork> = emptyList(),
+    val lastScanTimestamp: Long = 0L,
+    val remainingThrottleMs: Long = 0L,
+    val canScan: Boolean = true,
     val permissionState: PermissionState = PermissionState.Denied,
     val locationEnabled: Boolean = true,
+    val blockingState: BlockingState? = null,
+    val errorQueue: List<UiError> = emptyList(),
     val error: UiError? = null,
     val stateVersion: Long = 0L
-)
+) {
+    val scanResults: List<WifiNetwork>
+        get() = networks
+
+    val scanThrottleRemaining: Int
+        get() = (remainingThrottleMs / 1000L).toInt()
+}

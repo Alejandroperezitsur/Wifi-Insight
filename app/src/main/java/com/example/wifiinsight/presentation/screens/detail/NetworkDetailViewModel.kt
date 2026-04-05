@@ -1,6 +1,7 @@
 package com.example.wifiinsight.presentation.screens.detail
 
 import android.net.Uri
+import android.os.SystemClock
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -30,7 +31,9 @@ data class NetworkDetailUiState(
     val network: WifiNetwork? = null,
     val password: String = "",
     val connectionResult: ConnectionResultState = ConnectionResultState.Idle,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isStale: Boolean = false,
+    val lastScanTimestamp: Long = 0L
 )
 
 private data class DetailLocalState(
@@ -38,6 +41,8 @@ private data class DetailLocalState(
     val connectionResult: ConnectionResultState = ConnectionResultState.Idle,
     val lastKnownNetwork: WifiNetwork? = null
 )
+
+private const val NETWORK_STALE_TIMEOUT = 10_000L
 
 @HiltViewModel
 class NetworkDetailViewModel @Inject constructor(
@@ -54,20 +59,34 @@ class NetworkDetailViewModel @Inject constructor(
 
     val uiState: StateFlow<NetworkDetailUiState> = combine(
         repository.uiState
-            .map { repository.getNetworkByBssid(bssid) }
-            .onEach { network ->
+            .onEach { repositoryState ->
+                val network = repositoryState.networks.firstOrNull { it.bssid == bssid }
                 if (network != null) {
                     localState.update { it.copy(lastKnownNetwork = network) }
                 }
+            }
+            .map { repositoryState ->
+                repositoryState to repositoryState.networks.firstOrNull { it.bssid == bssid }
             },
         localState
-    ) { liveNetwork, local ->
+    ) { repositorySnapshot, local ->
+        val repositoryState = repositorySnapshot.first
+        val liveNetwork = repositorySnapshot.second
         val resolvedNetwork = liveNetwork ?: local.lastKnownNetwork
+        val scanAge = if (repositoryState.lastScanTimestamp == 0L) {
+            Long.MAX_VALUE
+        } else {
+            SystemClock.elapsedRealtime() - repositoryState.lastScanTimestamp
+        }
+        val isStale = resolvedNetwork != null &&
+            (liveNetwork == null || scanAge > NETWORK_STALE_TIMEOUT)
         NetworkDetailUiState(
             isLoading = false,
             network = resolvedNetwork,
             password = local.password,
             connectionResult = local.connectionResult,
+            isStale = isStale,
+            lastScanTimestamp = repositoryState.lastScanTimestamp,
             errorMessage = if (resolvedNetwork == null) {
                 "Red no disponible. Escanea de nuevo para cargar sus detalles."
             } else {
@@ -80,6 +99,7 @@ class NetworkDetailViewModel @Inject constructor(
         initialValue = NetworkDetailUiState(
             isLoading = false,
             network = initialNetwork,
+            isStale = false,
             errorMessage = if (initialNetwork == null) {
                 "Red no disponible. Escanea de nuevo para cargar sus detalles."
             } else {

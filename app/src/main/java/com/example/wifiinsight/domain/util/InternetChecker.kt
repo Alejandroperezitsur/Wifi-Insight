@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URL
 
 /**
@@ -103,28 +104,38 @@ class InternetChecker {
      * Intenta check con timeout y fallback URL.
      */
     private suspend fun tryCheck(): Boolean = withContext(Dispatchers.IO) {
-        // Intentar URL primaria
-        val primaryResult = try {
+        val primaryResponse = try {
             withTimeout(TIMEOUT_MS.toLong()) {
                 performCheck(TEST_URL)
             }
         } catch (e: Exception) {
-            false
+            -1
         }
-        
-        if (primaryResult) return@withContext true
-        
-        // Fallback a URL alternativa
-        return@withContext try {
+
+        val fallbackResponse = if (primaryResponse == 204) {
+            204
+        } else {
+            try {
+                withTimeout(TIMEOUT_MS.toLong()) {
+                    performCheck(FALLBACK_URL)
+                }
+            } catch (e: Exception) {
+                -1
+            }
+        }
+
+        val dnsOk = try {
             withTimeout(TIMEOUT_MS.toLong()) {
-                performCheck(FALLBACK_URL)
+                resolveHost("google.com")
             }
         } catch (e: Exception) {
             false
         }
+
+        (primaryResponse == 204 || fallbackResponse == 204) && dnsOk
     }
     
-    private fun performCheck(urlString: String): Boolean {
+    private fun performCheck(urlString: String): Int {
         return try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
@@ -140,7 +151,15 @@ class InternetChecker {
             val responseCode = connection.responseCode
             connection.disconnect()
             
-            responseCode == 204
+            responseCode
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    private fun resolveHost(host: String): Boolean {
+        return try {
+            InetAddress.getByName(host) != null
         } catch (e: Exception) {
             false
         }

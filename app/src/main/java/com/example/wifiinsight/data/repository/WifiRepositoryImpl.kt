@@ -151,11 +151,11 @@ class WifiRepositoryImpl(
 
                 val elapsed = SystemClock.elapsedRealtime() - lastScanElapsedTime
                 if (elapsed < SCAN_THROTTLE_MS) {
-                    val remaining = ((SCAN_THROTTLE_MS - elapsed) / 1000L).toInt().coerceAtLeast(1)
+                    val remaining = (SCAN_THROTTLE_MS - elapsed).coerceAtLeast(1L)
                     startThrottleCountdown(remaining)
                     dispatchError(
                         title = "Escaneo limitado",
-                        message = "Puedes escanear en ${remaining}s."
+                        message = "Puedes escanear en ${remaining / 1000L}s."
                     )
                     return@withContext
                 }
@@ -166,8 +166,13 @@ class WifiRepositoryImpl(
                 try {
                     val results = performRealScan()
                     lastScanElapsedTime = SystemClock.elapsedRealtime()
-                    dispatch(WifiEvent.ScanCompleted(results))
-                    dispatch(WifiEvent.ThrottleUpdated(0))
+                    dispatch(
+                        WifiEvent.ScanCompleted(
+                            results = results,
+                            completedAtElapsedMs = lastScanElapsedTime
+                        )
+                    )
+                    dispatch(WifiEvent.ThrottleUpdated(0L))
                 } catch (error: Exception) {
                     Log.e(TAG, "scanNetworks failed", error)
                     dispatch(
@@ -226,7 +231,7 @@ class WifiRepositoryImpl(
     override fun openLocationSettings(): Boolean = SystemSettingsHelper.openLocationSettings(appContext)
 
     override fun getNetworkByBssid(bssid: String): WifiNetwork? {
-        return _uiState.value.scanResults.firstOrNull { it.bssid == bssid }
+        return _uiState.value.networks.firstOrNull { it.bssid == bssid }
     }
 
     private fun observeUiSubscriptions() {
@@ -695,7 +700,7 @@ class WifiRepositoryImpl(
     }
 
     private fun sortScanResults(results: List<WifiNetwork>): List<WifiNetwork> {
-        val previousOrder = _uiState.value.scanResults
+        val previousOrder = _uiState.value.networks
             .mapIndexed { index, network ->
                 network.bssid.ifBlank { "${network.ssid}-${network.frequency}" } to index
             }
@@ -712,23 +717,23 @@ class WifiRepositoryImpl(
         }
     }
 
-    private fun startThrottleCountdown(seconds: Int) {
+    private fun startThrottleCountdown(remainingMs: Long) {
         throttleJob?.cancel()
         throttleJob = repositoryScope.launch {
-            var remaining = seconds
-            while (remaining > 0) {
+            var remaining = remainingMs
+            while (remaining > 0L) {
                 dispatch(WifiEvent.ThrottleUpdated(remaining))
                 delay(1_000L)
-                remaining--
+                remaining = (remaining - 1_000L).coerceAtLeast(0L)
             }
-            dispatch(WifiEvent.ThrottleUpdated(0))
+            dispatch(WifiEvent.ThrottleUpdated(0L))
         }
     }
 
     private fun stopThrottleCountdown() {
         throttleJob?.cancel()
         throttleJob = null
-        dispatch(WifiEvent.ThrottleUpdated(0))
+        dispatch(WifiEvent.ThrottleUpdated(0L))
     }
 
     private fun observeSignalChanges() = callbackFlow {

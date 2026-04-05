@@ -29,7 +29,8 @@ class FakeWifiRepository : WifiRepository {
         _uiState.update {
             it.copy(
                 isScanning = false,
-                scanResults = generateFakeNetworks()
+                networks = generateFakeNetworks(),
+                lastScanTimestamp = 1L
             )
         }
     }
@@ -62,7 +63,7 @@ class FakeWifiRepository : WifiRepository {
     override fun markPermissionRequested() = Unit
 
     override fun clearError() {
-        _uiState.update { it.copy(error = null) }
+        _uiState.update { it.copy(error = null, errorQueue = emptyList()) }
     }
 
     override fun openWifiSettings(): Boolean = true
@@ -72,7 +73,7 @@ class FakeWifiRepository : WifiRepository {
     override fun openLocationSettings(): Boolean = true
 
     override fun getNetworkByBssid(bssid: String): WifiNetwork? {
-        return _uiState.value.scanResults.firstOrNull { it.bssid == bssid }
+        return _uiState.value.networks.firstOrNull { it.bssid == bssid }
     }
 
     fun setPermissionState(permissionState: PermissionState) {
@@ -86,6 +87,12 @@ class FakeWifiRepository : WifiRepository {
     fun setError(message: String) {
         _uiState.update {
             it.copy(
+                errorQueue = listOf(
+                    UiError(
+                        title = "Error",
+                        message = message
+                    )
+                ),
                 error = UiError(
                     title = "Error",
                     message = message

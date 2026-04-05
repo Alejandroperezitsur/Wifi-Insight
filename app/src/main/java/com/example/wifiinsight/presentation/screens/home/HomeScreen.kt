@@ -27,6 +27,8 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -34,6 +36,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +73,21 @@ fun HomeScreen(
     val context = LocalContext.current
     val activity = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val connectionState by remember(uiState) {
+        derivedStateOf {
+            ConnectionState.Connected(
+                ssid = uiState.ssid ?: "Red desconocida",
+                bssid = uiState.bssid.orEmpty(),
+                ipAddress = uiState.ipAddress,
+                linkSpeed = uiState.linkSpeed,
+                rssi = uiState.signalStrength,
+                hasInternet = uiState.internetStatus == InternetStatus.AVAILABLE,
+                isValidated = uiState.internetStatus == InternetStatus.AVAILABLE,
+                internetStatus = uiState.internetStatus
+            )
+        }
+    }
 
     DisposableEffect(lifecycleOwner, activity) {
         val observer = LifecycleEventObserver { _, event ->
@@ -82,10 +101,19 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(uiState.errorQueue.firstOrNull()?.message) {
+        val error = uiState.errorQueue.firstOrNull() ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(error.message)
+        viewModel.clearError()
+    }
+
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -124,8 +152,7 @@ fun HomeScreen(
             HomeStateAlerts(
                 state = uiState,
                 onOpenAppSettings = viewModel::openAppSettings,
-                onOpenLocationSettings = viewModel::openLocationSettings,
-                onDismissError = viewModel::clearError
+                onOpenLocationSettings = viewModel::openLocationSettings
             )
 
             when {
@@ -138,7 +165,9 @@ fun HomeScreen(
 
                 uiState.isConnected -> {
                     ConnectedContent(
-                        uiState = uiState,
+                        connection = connectionState,
+                        signalHistory = uiState.signalHistory,
+                        isRefreshingConnection = uiState.isRefreshingConnection,
                         onNavigateToScan = onNavigateToScan,
                         onReEvaluate = viewModel::reEvaluateConnection,
                         onOpenWifiSettings = viewModel::openWifiSettings
@@ -162,8 +191,7 @@ fun HomeScreen(
 private fun HomeStateAlerts(
     state: WifiState,
     onOpenAppSettings: () -> Boolean,
-    onOpenLocationSettings: () -> Boolean,
-    onDismissError: () -> Unit
+    onOpenLocationSettings: () -> Boolean
 ) {
     if (state.isAirplaneMode) {
         StateFeedbackCard(
@@ -209,10 +237,10 @@ private fun HomeStateAlerts(
         PermissionState.Granted -> Unit
     }
 
-    if (state.scanThrottleRemaining > 0) {
+    if (!state.canScan) {
         StateFeedbackCard(
             title = "Escaneo en espera",
-            message = "Puedes escanear en ${state.scanThrottleRemaining}s.",
+            message = "Puedes escanear en ${(state.remainingThrottleMs / 1000L).coerceAtLeast(1L)}s.",
             tone = FeedbackTone.Info
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -227,36 +255,17 @@ private fun HomeStateAlerts(
         Spacer(modifier = Modifier.height(12.dp))
     }
 
-    state.error?.let { error ->
-        StateFeedbackCard(
-            title = error.title,
-            message = error.message,
-            tone = FeedbackTone.Error,
-            actionLabel = "Cerrar",
-            onAction = onDismissError
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-    }
 }
 
 @Composable
 private fun ConnectedContent(
-    uiState: WifiState,
+    connection: ConnectionState.Connected,
+    signalHistory: List<Int>,
+    isRefreshingConnection: Boolean,
     onNavigateToScan: () -> Unit,
     onReEvaluate: () -> Unit,
     onOpenWifiSettings: () -> Boolean
 ) {
-    val connection = ConnectionState.Connected(
-        ssid = uiState.ssid ?: "Red desconocida",
-        bssid = uiState.bssid.orEmpty(),
-        ipAddress = uiState.ipAddress,
-        linkSpeed = uiState.linkSpeed,
-        rssi = uiState.signalStrength,
-        hasInternet = uiState.internetStatus == InternetStatus.AVAILABLE,
-        isValidated = uiState.internetStatus == InternetStatus.AVAILABLE,
-        internetStatus = uiState.internetStatus
-    )
-
     com.example.wifiinsight.presentation.screens.home.components.CurrentNetworkCard(
         connectionState = connection,
         modifier = Modifier.fillMaxWidth()
@@ -264,7 +273,7 @@ private fun ConnectedContent(
 
     Spacer(modifier = Modifier.height(24.dp))
 
-    SignalSection(signalHistory = uiState.signalHistory)
+    SignalSection(signalHistory = signalHistory)
 
     Spacer(modifier = Modifier.height(24.dp))
 
@@ -272,7 +281,7 @@ private fun ConnectedContent(
         onNavigateToScan = onNavigateToScan,
         onReEvaluate = onReEvaluate,
         onOpenWifiSettings = onOpenWifiSettings,
-        isRefreshingConnection = uiState.isRefreshingConnection
+        isRefreshingConnection = isRefreshingConnection
     )
 }
 
@@ -281,6 +290,7 @@ private fun SignalSection(signalHistory: List<Int>) {
     val validHistory = remember(signalHistory) {
         signalHistory.filter { it != -127 }
     }
+    val lastRssi = validHistory.lastOrNull()
     val signalStatus = remember(validHistory) {
         when {
             validHistory.isEmpty() -> "Sin datos de señal"
@@ -302,6 +312,14 @@ private fun SignalSection(signalHistory: List<Int>) {
         Text(
             text = signalStatus,
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = "Señal: ${SignalCalculator.rssiToQuality(lastRssi)}",
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 

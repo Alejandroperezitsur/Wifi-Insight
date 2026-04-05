@@ -54,10 +54,10 @@ private fun ConnectedNetworkCard(
     val signalLevel = SignalCalculator.rssiToSignalLevel(rssi)
     val signalColor = getSignalColor(signalLevel)
     val statusMessage = when (connectionState.internetStatus) {
-        InternetStatus.AVAILABLE -> "Internet validado"
-        InternetStatus.CHECKING -> "Validando acceso a internet"
-        InternetStatus.UNAVAILABLE -> "Conectado sin internet"
-        InternetStatus.UNKNOWN -> "Conectado, verificando estado"
+        InternetStatus.AVAILABLE -> "Internet funcionando"
+        InternetStatus.CHECKING -> "Verificando conexión..."
+        InternetStatus.UNAVAILABLE -> "Sin internet (posible portal cautivo)"
+        InternetStatus.UNKNOWN -> "Verificando conexión..."
     }
 
     Card(

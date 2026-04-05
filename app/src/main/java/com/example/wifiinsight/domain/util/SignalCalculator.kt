@@ -141,6 +141,16 @@ object SignalCalculator {
     fun formatRssi(rssi: Int): String = "$rssi dBm"
     fun formatLinkSpeed(linkSpeed: Int): String = "$linkSpeed Mbps"
 
+    fun rssiToQuality(rssi: Int?): String {
+        if (rssi == null) return "Sin datos"
+        return when {
+            rssi >= -50 -> "Excelente"
+            rssi >= -60 -> "Buena"
+            rssi >= -70 -> "Regular"
+            else -> "Mala"
+        }
+    }
+
     /**
      * Genera recomendación basada en estabilidad.
      * RECIBE: List<Int> (del Repository, SSOT)
