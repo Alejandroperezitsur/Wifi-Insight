@@ -134,7 +134,12 @@ class NetworkDetailViewModel @Inject constructor(
     }
 
     fun connectToNetwork() {
-        val network = uiState.value.network ?: localState.value.lastKnownNetwork ?: return
+        val network = uiState.value.network ?: localState.value.lastKnownNetwork ?: run {
+            localState.update {
+                it.copy(connectionResult = ConnectionResultState.Error("No se encontró información de la red"))
+            }
+            return
+        }
         val password = uiState.value.password.ifBlank { null }
 
         viewModelScope.launch {
@@ -142,19 +147,29 @@ class NetworkDetailViewModel @Inject constructor(
                 it.copy(connectionResult = ConnectionResultState.Loading)
             }
 
-            val result = repository.connectToNetwork(network, password)
-            localState.update { current ->
-                current.copy(
-                    connectionResult = if (result.isSuccess) {
-                        ConnectionResultState.Success(
-                            result.getOrNull() ?: "Conectado exitosamente a ${network.safeSsid}"
+            try {
+                val result = repository.connectToNetwork(network, password)
+                localState.update { current ->
+                    current.copy(
+                        connectionResult = if (result.isSuccess) {
+                            ConnectionResultState.Success(
+                                result.getOrNull() ?: "Conectado exitosamente a ${network.safeSsid}"
+                            )
+                        } else {
+                            ConnectionResultState.Error(
+                                result.exceptionOrNull()?.message ?: "No se pudo conectar"
+                            )
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                localState.update { current ->
+                    current.copy(
+                        connectionResult = ConnectionResultState.Error(
+                            e.message ?: "Error inesperado al intentar conectar"
                         )
-                    } else {
-                        ConnectionResultState.Error(
-                            result.exceptionOrNull()?.message ?: "No se pudo conectar"
-                        )
-                    }
-                )
+                    )
+                }
             }
         }
     }

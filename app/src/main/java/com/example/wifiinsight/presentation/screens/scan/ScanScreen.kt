@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -202,7 +204,8 @@ fun ScanScreen(
             if (uiState.blockingState == null && !uiState.isScanning && uiState.canScan) {
                 FloatingActionButton(
                     onClick = requestScan,
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -210,7 +213,8 @@ fun ScanScreen(
                     )
                 }
             }
-        }
+        },
+        contentWindowInsets = WindowInsets.safeDrawing
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -245,12 +249,23 @@ fun ScanScreen(
                     ScanContentState.Blocked -> {
                         when (uiState.blockingState) {
                             BlockingState.NoPermission -> {
+                                val isFirstTime = !uiState.permissionState.toString().contains("Requested")
+                                val isPermanentlyDenied = uiState.permissionState == PermissionState.PermanentlyDenied
+                                
                                 PermissionRequiredState(
-                                    message = "Necesitamos permisos para mostrar redes cercanas.",
-                                    actionLabel = "Permitir acceso",
+                                    message = if (isPermanentlyDenied) {
+                                        "Los permisos están bloqueados. Actívalos desde Ajustes del sistema."
+                                    } else {
+                                        "Necesitamos permisos para mostrar redes cercanas."
+                                    },
+                                    actionLabel = if (isPermanentlyDenied) "Abrir ajustes" else "Permitir acceso",
                                     onAction = {
-                                        viewModel.markPermissionRequested()
-                                        permissionLauncher.launch(requiredPermissions())
+                                        if (isPermanentlyDenied) {
+                                            viewModel.openAppSettings()
+                                        } else {
+                                            viewModel.markPermissionRequested()
+                                            permissionLauncher.launch(requiredPermissions())
+                                        }
                                     }
                                 )
                             }
@@ -384,7 +399,7 @@ private fun NetworksList(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 4.dp),
+        contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         items(

@@ -264,7 +264,9 @@ private fun HomeStateAlerts(
             StateFeedbackCard(
                 title = "Permiso pendiente",
                 message = "Permite ubicación para escanear redes WiFi.",
-                tone = FeedbackTone.Warning
+                tone = FeedbackTone.Warning,
+                actionLabel = "Solicitar permiso",
+                onAction = { onOpenAppSettings() }
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
@@ -272,7 +274,7 @@ private fun HomeStateAlerts(
         PermissionState.PermanentlyDenied -> {
             StateFeedbackCard(
                 title = "Permiso bloqueado",
-                message = "Activa los permisos desde Ajustes para volver a escanear redes.",
+                message = "Activa los permisos desde Ajustes del sistema para volver a escanear redes.",
                 tone = FeedbackTone.Error,
                 actionLabel = "Abrir ajustes",
                 onAction = { onOpenAppSettings() }
