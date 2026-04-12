@@ -117,41 +117,8 @@ class MonitorConnectionUseCase @Inject constructor(
 
     /**
      * Flow que emite cambios de señal RSSI.
+     * Nota: Esta es una implementación placeholder - el RSSI real
+     * requiere acceso al WifiManager desde el repository.
      */
-    fun monitorSignal(): Flow<Int> = callbackFlow {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-            as? ConnectivityManager
-            ?: run {
-                close()
-                return@callbackFlow
-            }
-
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(
-                network: Network,
-                capabilities: NetworkCapabilities
-            ) {
-                // El RSSI se actualiza en las capabilities
-                // Para obtener RSSI preciso necesitamos WifiManager
-                // Este es un placeholder para el evento de cambio
-            }
-        }
-
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .build()
-
-        try {
-            connectivityManager.registerNetworkCallback(request, callback)
-        } catch (e: Exception) {
-            close(e)
-            return@callbackFlow
-        }
-
-        awaitClose {
-            try {
-                connectivityManager.unregisterNetworkCallback(callback)
-            } catch (_: Exception) {}
-        }
-    }.conflate()
+    fun monitorSignal(): Flow<Int> = kotlinx.coroutines.flow.emptyFlow()
 }

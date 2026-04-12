@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
-import com.example.wifiinsight.data.model.ConnectionInfo
 import com.example.wifiinsight.domain.util.InternetChecker
 import com.example.wifiinsight.domain.util.SignalCalculator
 import javax.inject.Inject

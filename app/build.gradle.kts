@@ -29,6 +29,11 @@ android {
             )
         }
     }
+    
+    // Fix for JDK jlink issue in some environments
+    tasks.withType<JavaCompile> {
+        options.isFork = false
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -18,7 +18,6 @@ object WifiStateReducer {
                 isProcessing = true,
                 lastAction = event.action,
                 activeActionToken = event.token,
-                error = null,
                 stateVersion = state.stateVersion + 1
             )
 
@@ -134,7 +133,6 @@ object WifiStateReducer {
 
             is WifiEvent.ScanStarted -> state.copy(
                 isScanning = true,
-                error = null,
                 errorQueue = emptyList(),
                 stateVersion = state.stateVersion + 1
             )
@@ -154,7 +152,6 @@ object WifiStateReducer {
 
             is WifiEvent.ConnectionRefreshStarted -> state.copy(
                 isRefreshingConnection = true,
-                error = null,
                 errorQueue = emptyList(),
                 stateVersion = state.stateVersion + 1
             )
@@ -242,8 +239,7 @@ object WifiStateReducer {
                 else -> state.connectionQuality
             },
             canScan = state.remainingThrottleMs <= 0L,
-            blockingState = blockingState,
-            error = state.errorQueue.firstOrNull()
+            blockingState = blockingState
         )
     }
 
