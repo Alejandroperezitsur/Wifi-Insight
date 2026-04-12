@@ -61,6 +61,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.wifiinsight.data.model.ConnectionState
 import com.example.wifiinsight.data.model.InternetStatus
 import com.example.wifiinsight.data.model.PermissionState
@@ -100,6 +104,22 @@ fun HomeScreen(
             )
         }
     }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        viewModel.refreshPermissions(activity)
+    }
+
+    val requestPermissions: () -> Unit = {
+        viewModel.markPermissionRequested()
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES, Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        permissionLauncher.launch(permissions)
+    }
+
     val contentState by remember(uiState.wifiEnabled, uiState.isConnected) {
         derivedStateOf {
             when {
@@ -189,6 +209,7 @@ fun HomeScreen(
 
             HomeStateAlerts(
                 state = uiState,
+                onRequestPermission = requestPermissions,
                 onOpenAppSettings = viewModel::openAppSettings,
                 onOpenLocationSettings = viewModel::openLocationSettings
             )
@@ -236,6 +257,7 @@ fun HomeScreen(
 @Composable
 private fun HomeStateAlerts(
     state: WifiState,
+    onRequestPermission: () -> Unit,
     onOpenAppSettings: () -> Boolean,
     onOpenLocationSettings: () -> Boolean
 ) {
@@ -248,7 +270,7 @@ private fun HomeStateAlerts(
         Spacer(modifier = Modifier.height(12.dp))
     }
 
-    if (!state.locationEnabled) {
+    if (!state.locationEnabled && state.wifiEnabled) {
         StateFeedbackCard(
             title = "Ubicación desactivada",
             message = "Activa ubicación para poder escanear redes cercanas.",
@@ -266,7 +288,7 @@ private fun HomeStateAlerts(
                 message = "Permite ubicación para escanear redes WiFi.",
                 tone = FeedbackTone.Warning,
                 actionLabel = "Solicitar permiso",
-                onAction = { onOpenAppSettings() }
+                onAction = onRequestPermission
             )
             Spacer(modifier = Modifier.height(12.dp))
         }

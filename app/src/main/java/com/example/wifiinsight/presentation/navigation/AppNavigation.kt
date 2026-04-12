@@ -20,51 +20,47 @@ import com.example.wifiinsight.presentation.screens.scan.ScanScreen
 fun AppNavigation(
     navController: NavHostController = rememberNavController()
 ) {
-    Scaffold(
+    NavHost(
+        navController = navController,
+        startDestination = Screen.Home.route,
         modifier = Modifier.fillMaxSize()
-    ) { paddingValues ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Home.route,
-            modifier = Modifier.padding(paddingValues)
-        ) {
-            composable(Screen.Home.route) {
-                HomeScreen(
-                    onNavigateToScan = {
-                        navController.navigate(Screen.Scan.route)
-                    },
-                    onOpenDebug = if (BuildConfig.DEBUG) {
-                        { navController.navigate(Screen.Debug.route) }
-                    } else {
-                        null
-                    }
-                )
-            }
+    ) {
+        composable(Screen.Home.route) {
+            HomeScreen(
+                onNavigateToScan = {
+                    navController.navigate(Screen.Scan.route)
+                },
+                onOpenDebug = if (BuildConfig.DEBUG) {
+                    { navController.navigate(Screen.Debug.route) }
+                } else {
+                    null
+                }
+            )
+        }
 
-            composable(Screen.Scan.route) {
-                ScanScreen(
-                    onNavigateToDetail = { bssid ->
-                        navController.navigate(Screen.Detail.createRoute(Uri.encode(bssid)))
-                    }
-                )
-            }
+        composable(Screen.Scan.route) {
+            ScanScreen(
+                onNavigateToDetail = { bssid ->
+                    navController.navigate(Screen.Detail.createRoute(Uri.encode(bssid)))
+                }
+            )
+        }
 
-            composable(Screen.Detail.route) {
-                NetworkDetailScreen(
+        composable(Screen.Detail.route) {
+            NetworkDetailScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        if (BuildConfig.DEBUG) {
+            composable(Screen.Debug.route) {
+                DebugScreen(
                     onNavigateBack = {
                         navController.popBackStack()
                     }
                 )
-            }
-
-            if (BuildConfig.DEBUG) {
-                composable(Screen.Debug.route) {
-                    DebugScreen(
-                        onNavigateBack = {
-                            navController.popBackStack()
-                        }
-                    )
-                }
             }
         }
     }
