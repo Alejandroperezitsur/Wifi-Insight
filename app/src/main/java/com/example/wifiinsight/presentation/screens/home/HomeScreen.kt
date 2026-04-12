@@ -6,10 +6,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeContent
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -146,7 +151,8 @@ fun HomeScreen(
                         }
                     )
                 },
-                scrollBehavior = scrollBehavior
+                scrollBehavior = scrollBehavior,
+                windowInsets = WindowInsets.safeDrawing
             )
         },
         floatingActionButton = {
@@ -154,7 +160,8 @@ fun HomeScreen(
                 FloatingActionButton(
                     onClick = onNavigateToScan,
                     containerColor = MaterialTheme.colorScheme.primary,
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(end = 8.dp, bottom = 8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Search,
@@ -163,7 +170,8 @@ fun HomeScreen(
                     )
                 }
             }
-        }
+        },
+        contentWindowInsets = WindowInsets.safeContent
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -218,6 +226,9 @@ fun HomeScreen(
                     }
                 }
             }
+            
+            // Espacio adicional al final para que el FAB no tape contenido
+            Spacer(modifier = Modifier.height(80.dp))
         }
     }
 }

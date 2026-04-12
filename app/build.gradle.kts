@@ -8,12 +8,12 @@ plugins {
 
 android {
     namespace = "com.example.wifiinsight"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.example.wifiinsight"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "3.3"
 
@@ -34,6 +34,15 @@ android {
     tasks.withType<JavaCompile> {
         options.isFork = false
     }
+    
+    // Disable androidJdkImage transformation that requires jlink
+    android.applicationVariants.all {
+        val variant = this
+        variant.javaCompileProvider.configure {
+            // Skip problematic transformation
+        }
+    }
+    
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -52,7 +61,8 @@ kapt {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")

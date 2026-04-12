@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Background circle -->
+    <path
+        android:fillColor="#E8DEF8"
+        android:pathData="M54,54m-48,0a48,48 0,1 1,96 0a48,48 0,1 1,-96 0" />
+    
+    <!-- Signal waves - outer arc -->
+    <path
+        android:strokeColor="#6750A4"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M20,72 Q54,28 88,72" />
+    
+    <!-- Signal waves - middle arc -->
+    <path
+        android:strokeColor="#6750A4"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M30,68 Q54,40 78,68" />
+    
+    <!-- Signal waves - inner arc -->
+    <path
+        android:strokeColor="#6750A4"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M40,64 Q54,50 68,64" />
+    
+    <!-- Center dot with pulse effect -->
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M54,58m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+    
+    <!-- Analytics bar indicator - left small bar -->
+    <path
+        android:fillColor="#958DA5"
+        android:pathData="M54,42L56,42L56,48L54,48Z" />
+    
+    <!-- Analytics bar indicator - right tall bar -->
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M58,36L60,36L60,48L58,48Z" />
+    
+    <!-- Signal strength indicator line -->
+    <path
+        android:strokeColor="#4A4458"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M52,36 L56,42 L60,32" />
+</vector>
