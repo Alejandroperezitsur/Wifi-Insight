@@ -27,10 +27,12 @@ import com.example.wifiinsight.data.model.WifiEvent
 import com.example.wifiinsight.data.model.WifiNetwork
 import com.example.wifiinsight.data.model.WifiState
 import com.example.wifiinsight.data.reducer.WifiStateReducer
+import com.example.wifiinsight.domain.util.ConnectionResult
 import com.example.wifiinsight.domain.util.InternetChecker
 import com.example.wifiinsight.domain.util.PermissionHandler
 import com.example.wifiinsight.domain.util.SettingsHelper
 import com.example.wifiinsight.domain.util.SystemSettingsHelper
+import com.example.wifiinsight.domain.util.WifiConnector
 import com.example.wifiinsight.domain.util.WifiDebugLogger
 import com.example.wifiinsight.domain.util.WifiStateMonitor
 import kotlinx.coroutines.CoroutineScope
@@ -59,7 +61,8 @@ import kotlin.coroutines.resumeWithException
 
 class WifiRepositoryImpl(
     private val context: Context,
-    private val internetChecker: InternetChecker
+    private val internetChecker: InternetChecker,
+    private val wifiConnector: WifiConnector
 ) : WifiRepository {
 
     companion object {
@@ -240,10 +243,24 @@ class WifiRepositoryImpl(
         }
     }
 
-    override suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<Unit> {
-        val error = NotImplementedError("WiFi connection not supported")
-        Log.w(TAG, "connectToNetwork blocked for ${network.bssid}", error)
-        return Result.failure(error)
+    override suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<String> {
+        Log.i(TAG, "Connecting to network: ${network.ssid} (${network.securityType})")
+
+        return try {
+            when (val result = wifiConnector.connectToNetwork(network, password)) {
+                is ConnectionResult.Success -> {
+                    Log.i(TAG, "✓ Connected to ${network.ssid}: ${result.message}")
+                    Result.success(result.message)
+                }
+                is ConnectionResult.Error -> {
+                    Log.w(TAG, "✗ Failed to connect to ${network.ssid}: ${result.message}")
+                    Result.failure(Exception(result.message))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error connecting to network", e)
+            Result.failure(e)
+        }
     }
 
     override fun refreshSystemState(activity: Activity?) {

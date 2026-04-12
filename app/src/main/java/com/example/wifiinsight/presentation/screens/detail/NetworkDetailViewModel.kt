@@ -146,7 +146,9 @@ class NetworkDetailViewModel @Inject constructor(
             localState.update { current ->
                 current.copy(
                     connectionResult = if (result.isSuccess) {
-                        ConnectionResultState.Success("Conexión iniciada.")
+                        ConnectionResultState.Success(
+                            result.getOrNull() ?: "Conectado exitosamente a ${network.safeSsid}"
+                        )
                     } else {
                         ConnectionResultState.Error(
                             result.exceptionOrNull()?.message ?: "No se pudo conectar"

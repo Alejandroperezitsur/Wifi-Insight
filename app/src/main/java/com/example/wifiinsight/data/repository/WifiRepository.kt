@@ -12,7 +12,7 @@ interface WifiRepository {
 
     suspend fun reEvaluateConnection()
 
-    suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<Unit>
+    suspend fun connectToNetwork(network: WifiNetwork, password: String?): Result<String>
 
     fun refreshSystemState(activity: Activity? = null)
 

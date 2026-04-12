@@ -61,6 +61,7 @@ data class WifiState(
     val wifiEnabled: Boolean = false,
     val isAirplaneMode: Boolean = false,
     val isConnected: Boolean = false,
+    val isDemoMode: Boolean = false,  // Nuevo: modo demo para presentaciones
     val ssid: String? = null,
     val bssid: String? = null,
     val ipAddress: String? = null,
@@ -83,7 +84,6 @@ data class WifiState(
     val blockingState: BlockingState? = null,
     val systemDegradation: SystemDegradation = SystemDegradation.None,
     val errorQueue: List<UiError> = emptyList(),
-    val error: UiError? = null,
     val stateVersion: Long = 0L
 ) {
     val scanResults: List<WifiNetwork>

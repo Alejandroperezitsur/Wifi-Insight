@@ -10,7 +10,7 @@ Aplicación Android profesional para análisis y gestión de redes WiFi con arqu
 - **Información de red actual**: SSID, IP, velocidad de enlace, RSSI en tiempo real
 - **Monitor de conectividad** usando ConnectivityManager
 - **Diagnóstico avanzado**: clasificación de calidad de red y recomendaciones
-- **Conexión a redes** usando WifiNetworkSpecifier/Suggestion API
+- **Conexión a redes** usando WifiNetworkSpecifier/Suggestion API (Android 10+)
 
 ### UI/UX Premium
 - **Material 3 Design** con tema personalizado profesional
@@ -30,16 +30,19 @@ Aplicación Android profesional para análisis y gestión de redes WiFi con arqu
 ```
 com.example.wifiinsight/
 ├── data/
-│   ├── model/           # WifiNetwork, ConnectionState, SignalLevel, NetworkQuality
+│   ├── model/           # WifiNetwork, ConnectionState, SignalLevel, NetworkQuality, WifiState
 │   ├── repository/      # WifiRepository, WifiRepositoryImpl
-│   └── local/           # (Room opcional para persistencia)
+│   └── reducer/         # WifiStateReducer para manejo de estado
 ├── domain/
-│   ├── usecase/         # Scan, Connect, GetCurrentConnection, MonitorSignal
-│   └── util/            # PermissionHelper, SignalCalculator
+│   ├── usecase/         # ScanNetworksUseCase, ConnectToNetworkUseCase, GetCurrentConnectionUseCase, MonitorConnectionUseCase
+│   └── util/            # WifiConnector, SignalCalculator, InternetChecker, PermissionHandler
 ├── presentation/
-│   ├── common/          # Componentes reutilizables, tema
-│   ├── screens/         # Home, Scan, Detail screens con ViewModels
-│   └── navigation/      # AppNavigation, Screen routes
+│   ├── common/          # Componentes reutilizables (LoadingButton, TimeoutHandler, GlobalStatusBar, DemoModeBadge)
+│   ├── screens/         # Home, Scan, Detail, Debug screens
+│   ├── navigation/      # AppNavigation, Screen routes
+│   └── viewmodel/       # UnifiedWifiViewModel, NetworkDetailViewModel
+├── di/
+│   └── AppModule.kt     # Inyección de dependencias con Hilt
 └── MainActivity.kt
 ```
 
@@ -140,12 +143,29 @@ com.example.wifiinsight/
 - Uso de sistema de sugerencias de WiFi nativo
 - Permisos just-in-time con explicaciones
 
-## Próximas Mejoras
+## Estado de Features
 
+### Implementadas ✅
+- [x] Escaneo de redes WiFi en tiempo real
+- [x] Visualización de señal con gráficas
+- [x] Monitoreo de conexión continuo
+- [x] **Conexión a redes WiFi** (Android 10+ con WifiNetworkSpecifier)
+- [x] Manejo de permisos runtime (Android 13+ NEARBY_WIFI_DEVICES)
+- [x] Throttling de scan de Android
+- [x] Estados de error UX fail-safe
+- [x] Componentes UI reutilizables (LoadingButton, GlobalStatusBar, TimeoutHandler)
+- [x] Arquitectura Clean con Use Cases
+- [x] Debug screen para desarrollo
+
+### En Desarrollo 🚧
+- [ ] Exportar datos de escaneo (JSON/CSV)
+- [ ] Análisis de congestión de canales WiFi
+- [ ] Recomendaciones inteligentes de mejora
+
+### Próximas Mejoras 📋
 - [ ] Persistencia de historial con Room
-- [ ] Gráficas más detalladas (velocidad, latencia)
+- [ ] Gráficas de velocidad de enlace histórica
 - [ ] Mapa de calor de señal
-- [ ] Exportar datos de escaneo
 - [ ] Widget de escritorio
 
 ## Licencia
