@@ -59,10 +59,12 @@ private fun ConnectedNetworkCard(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-        )
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(
             modifier = Modifier.padding(20.dp)
@@ -82,48 +84,70 @@ private fun ConnectedNetworkCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text = connectionState.safeSsid,
-                        style = MaterialTheme.typography.headlineSmall,
+                        text = "CONECTADO A",
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = connectionState.safeSsid,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
                     StatusLabel(
-                        color = statusColor,
+                        color = MaterialTheme.colorScheme.primary,
                         text = statusMessage
                     )
                 }
 
-                Text(
-                    text = "${connectionState.getSafeSignalPercentage()}%",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = signalColor
-                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${connectionState.getSafeSignalPercentage()}%",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "POTENCIA",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            DetailRow(
-                label = "BSSID",
-                value = connectionState.safeBssid
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            DetailRow(
-                label = "IP",
-                value = connectionState.getSafeIpAddress()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            DetailRow(
-                label = "Velocidad",
-                value = connectionState.getSafeLinkSpeed()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            DetailRow(
-                label = "Señal",
-                value = signalConfidenceMessage(connectionState.rssi)
-            )
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                    .padding(12.dp)
+            ) {
+                DetailRow(
+                    label = "BSSID",
+                    value = connectionState.safeBssid
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                DetailRow(
+                    label = "IP Address",
+                    value = connectionState.getSafeIpAddress()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                DetailRow(
+                    label = "Link Speed",
+                    value = connectionState.getSafeLinkSpeed()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                DetailRow(
+                    label = "Status",
+                    value = signalConfidenceMessage(connectionState.rssi)
+                )
+            }
         }
     }
 }
@@ -166,10 +190,12 @@ private fun DisconnectedNetworkCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-        )
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(
             modifier = Modifier.padding(20.dp)

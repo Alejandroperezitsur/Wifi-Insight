@@ -313,22 +313,24 @@ fun ScanScreen(
                     }
 
                     ScanContentState.Results -> {
-                        if (uiState.networks.size > visibleNetworks.size) {
-                            Text(
-                                text = "Mostrando las 20 redes con mayor prioridad.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                        Column {
+                            if (uiState.networks.size > visibleNetworks.size) {
+                                Text(
+                                    text = "Mostrando las 20 redes con mayor prioridad.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
+                            NetworksList(
+                                networks = visibleNetworks,
+                                connectedBssid = uiState.bssid.orEmpty(),
+                                onNetworkClick = { network ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onNavigateToDetail(network.bssid)
+                                }
                             )
                         }
-                        NetworksList(
-                            networks = visibleNetworks,
-                            connectedBssid = uiState.bssid.orEmpty(),
-                            onNetworkClick = { network ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onNavigateToDetail(network.bssid)
-                            }
-                        )
                     }
                 }
             }

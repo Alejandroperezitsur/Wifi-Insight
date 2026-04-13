@@ -227,23 +227,27 @@ fun HomeScreen(
                     }
 
                     HomeContentState.Connected -> {
-                        ConnectedContent(
-                            connection = connectionState,
-                            signalHistory = uiState.signalHistory,
-                            isRefreshingConnection = uiState.isRefreshingConnection,
-                            onNavigateToScan = onNavigateToScan,
-                            onReEvaluate = viewModel::reEvaluateConnection,
-                            onOpenWifiSettings = viewModel::openWifiSettings
-                        )
+                        Column {
+                            ConnectedContent(
+                                connection = connectionState,
+                                signalHistory = uiState.signalHistory,
+                                isRefreshingConnection = uiState.isRefreshingConnection,
+                                onNavigateToScan = onNavigateToScan,
+                                onReEvaluate = viewModel::reEvaluateConnection,
+                                onOpenWifiSettings = viewModel::openWifiSettings
+                            )
+                        }
                     }
 
                     HomeContentState.Disconnected -> {
-                        DisconnectedContent(
-                            isRefreshingConnection = uiState.isRefreshingConnection,
-                            onReEvaluate = viewModel::reEvaluateConnection,
-                            onOpenSettings = viewModel::openWifiSettings,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Column {
+                            DisconnectedContent(
+                                isRefreshingConnection = uiState.isRefreshingConnection,
+                                onReEvaluate = viewModel::reEvaluateConnection,
+                                onOpenSettings = viewModel::openWifiSettings,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
             }
@@ -379,11 +383,12 @@ private fun SignalSection(signalHistory: List<Int>) {
         }
     }
 
-    Column {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = "Señal en Tiempo Real",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -462,11 +467,20 @@ private fun ActionsSection(
     onOpenWifiSettings: () -> Boolean,
     isRefreshingConnection: Boolean
 ) {
-    Column {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Acciones",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
+            text = "Acciones Rápidas",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        
+        Spacer(modifier = Modifier.height(4.dp))
+        
+        Text(
+            text = "Gestiona tu conexión y escanea el entorno",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(16.dp))
