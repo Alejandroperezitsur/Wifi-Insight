@@ -13,7 +13,8 @@ class PermissionHandler(private val context: Context) {
     companion object {
         val REQUIRED_PERMISSIONS = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             arrayOf(
-                Manifest.permission.NEARBY_WIFI_DEVICES
+                Manifest.permission.NEARBY_WIFI_DEVICES,
+                Manifest.permission.ACCESS_FINE_LOCATION
             )
         } else {
             arrayOf(

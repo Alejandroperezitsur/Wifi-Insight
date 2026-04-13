@@ -822,21 +822,29 @@ class WifiRepositoryImpl(
             try {
                 receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
-                            return
-                        }
-
-                        val results = wifiService.scanResults
-                            .orEmpty()
-                            .map { WifiNetwork.fromScanResult(it) }
-                            .distinctBy { network ->
-                                network.bssid.ifBlank { "${network.ssid}-${network.frequency}" }
+                        try {
+                            if (intent?.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                                return
                             }
-                            .let(::sortScanResults)
 
-                        cleanup()
-                        if (continuation.isActive) {
-                            continuation.resume(results)
+                            val results = wifiService.scanResults
+                                .orEmpty()
+                                .map { WifiNetwork.fromScanResult(it) }
+                                .distinctBy { network ->
+                                    network.bssid.ifBlank { "${network.ssid}-${network.frequency}" }
+                                }
+                                .let(::sortScanResults)
+
+                            cleanup()
+                            if (continuation.isActive) {
+                                continuation.resume(results)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error in scan onReceive", e)
+                            cleanup()
+                            if (continuation.isActive) {
+                                continuation.resume(emptyList())
+                            }
                         }
                     }
                 }
@@ -1030,7 +1038,9 @@ class WifiRepositoryImpl(
 
     private fun registerReceiverCompat(receiver: BroadcastReceiver, filter: IntentFilter) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            // For system broadcasts on API 34 (Android 14) we MUST use RECEIVER_EXPORTED
+            // as it was the previous default behavior and system processes need to reach us.
+            appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             appContext.registerReceiver(receiver, filter)
         }

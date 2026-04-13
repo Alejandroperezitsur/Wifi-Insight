@@ -91,9 +91,9 @@ private fun ConnectedNetworkCard(
                     )
                     Text(
                         text = connectionState.safeSsid,
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
+                        maxLines = 2, // Allow up to 2 lines for long names
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
